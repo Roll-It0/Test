@@ -2,17 +2,12 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const services = new Set([
-    "Players", "Workspace", "ReplicatedStorage", "ServerScriptService", 
-    "ServerStorage", "HttpService", "TweenService", "LogService", 
-    "UserInputService", "RunService", "Lighting", "SoundService", 
-    "Teams", "MarketplaceService", "TeleportService", "DataStoreService"
-]);
-
-const physics = new Set([
-    "BodyThrust", "BodyVelocity", "RocketPropulsion", "BodyAngularVelocity", 
-    "BodyPosition", "BodyGyro", "LinearVelocity", "AngularVelocity", "VectorForce"
-]);
+const opcodeVectors = {
+    3: { getGlobal: 0xA4, loadK: 0x9F, nameCall: 0x52, close: 0x1E, jump: 0x4D, getUpvalue: 0x12, setUpvalue: 0x13, jmpIf: 0x4E, jmpIfNot: 0x4F },
+    4: { getGlobal: 0xB2, loadK: 0xA1, nameCall: 0x58, close: 0x22, jump: 0x51, getUpvalue: 0x15, setUpvalue: 0x16, jmpIf: 0x52, jmpIfNot: 0x53 },
+    5: { getGlobal: 0xC1, loadK: 0xB5, nameCall: 0x61, close: 0x2A, jump: 0x5D, getUpvalue: 0x19, setUpvalue: 0x1A, jmpIf: 0x5E, jmpIfNot: 0x5F },
+    6: { getGlobal: 0xD4, loadK: 0xC2, nameCall: 0x6E, close: 0x31, jump: 0x65, getUpvalue: 0x20, setUpvalue: 0x21, jmpIf: 0x66, jmpIfNot: 0x67 }
+};
 
 function readVarint(buffer, state) {
     let result = 0;
@@ -26,49 +21,53 @@ function readVarint(buffer, state) {
     return result;
 }
 
-function spawnCrawler(slice, stringTable, crawlerId, sharedKnowledgeBase) {
+function spawnUpvalueCrawler(slice, stringTable, vectors, sharedKnowledgeBase) {
     return new Promise((resolve) => {
-        let localRegisters = {};
         let ptr = 0;
-
         while (ptr < slice.length) {
             if (ptr + 4 > slice.length) break;
-            
+            const op = slice[ptr];
+            const rA = slice[ptr + 1];
+            const rB = slice[ptr + 2];
+            ptr += 4;
+            if (op === vectors.getUpvalue) {
+                sharedKnowledgeBase.upvalues[rB] = { index: rB, boundRegister: rA, scope: "parent" };
+                sharedKnowledgeBase.hints.push({ type: "UPVALUE_BIND", upvalueIndex: rB, register: rA });
+            } else if (op === vectors.setUpvalue) {
+                sharedKnowledgeBase.hints.push({ type: "UPVALUE_MUTATE", upvalueIndex: rB, valueFromRegister: rA });
+            }
+        }
+        resolve();
+    });
+}
+
+function spawnFunctionCrawler(slice, stringTable, vectors, sharedKnowledgeBase) {
+    return new Promise((resolve) => {
+        let ptr = 0;
+        while (ptr < slice.length) {
+            if (ptr + 4 > slice.length) break;
             const op = slice[ptr];
             const rA = slice[ptr + 1];
             const rB = slice[ptr + 2];
             const rC = slice[ptr + 3];
             ptr += 4;
 
-            if (op === 0xA4) { 
-                const kIdx = rB;
-                if (stringTable[kIdx]) {
-                    localRegisters[rA] = stringTable[kIdx];
-                    if (services.has(stringTable[kIdx])) {
-                        sharedKnowledgeBase.services.add(stringTable[kIdx]);
-                    }
+            if (op === vectors.getGlobal || op === vectors.loadK) {
+                if (stringTable[rB]) {
+                    sharedKnowledgeBase.registers[rA] = stringTable[rB];
                 }
-            } 
-            else if (op === 0x9F) { 
-                const kIdx = rB;
-                if (stringTable[kIdx]) {
-                    localRegisters[rA] = stringTable[kIdx];
-                    if (physics.has(stringTable[kIdx])) {
-                        sharedKnowledgeBase.physics.add(stringTable[kIdx]);
-                    }
-                }
-            }
-            else if (op === 0x52) { 
+            } else if (op === vectors.nameCall) {
                 const method = stringTable[rC];
-                const target = localRegisters[rB];
+                const target = sharedKnowledgeBase.registers[rB];
                 if (method && target) {
-                    if (method === "GetService") {
-                        sharedKnowledgeBase.services.add(target);
-                    }
+                    sharedKnowledgeBase.hints.push({ type: "CALL", target: target, method: method, dest: rA });
                 }
+            } else if (op === vectors.jmpIf || op === vectors.jmpIfNot) {
+                const conditionVar = sharedKnowledgeBase.registers[rA] || "condition";
+                sharedKnowledgeBase.hints.push({ type: "CONDITIONAL_BRANCH", variable: conditionVar, mode: op === vectors.jmpIf ? "if" : "ifNot" });
             }
         }
-        resolve({ crawlerId, registers: localRegisters });
+        resolve();
     });
 }
 
@@ -83,6 +82,8 @@ function decompileLuau(hexString, callback) {
         let state = { ptr: 0 };
         const luauVersion = buffer[state.ptr++];
         const bytecodeVersion = luauVersion >= 4 ? buffer[state.ptr++] : luauVersion;
+
+        const vectors = opcodeVectors[bytecodeVersion] || opcodeVectors[3];
 
         const stringCount = readVarint(buffer, state);
         let stringTable = [];
@@ -112,22 +113,28 @@ function decompileLuau(hexString, callback) {
             return callback(`-- Bytecode Version ${bytecodeVersion} | Length ${buffer.length} bytes\n`);
         }
 
-        const crawlerCount = 100;
-        const chunkSize = Math.ceil(totalInstructionsSize / crawlerCount);
-        let crawlerPromises = [];
-        let sharedKnowledgeBase = { services: new Set(), physics: new Set() };
+        const alignedStart = instructionStart + (4 - (instructionStart % 4)) % 4;
+        const processBuffer = buffer.subarray(alignedStart);
 
-        for (let i = 0; i < crawlerCount; i++) {
-            const startIdx = instructionStart + (i * chunkSize);
-            const endIdx = Math.min(buffer.length, startIdx + chunkSize);
-            if (startIdx >= buffer.length) break;
+        let sharedKnowledgeBase = { registers: {}, upvalues: {}, hints: [], services: new Set(), physics: new Set() };
+        
+        const segmentSize = Math.floor(processBuffer.length / 2);
+        const upvalueSlice = processBuffer.subarray(0, segmentSize);
+        const functionSlice = processBuffer.subarray(segmentSize);
 
-            const slice = buffer.subarray(startIdx, endIdx);
-            crawlerPromises.push(spawnCrawler(slice, uniqueStrings, i, sharedKnowledgeBase));
-        }
-
-        Promise.all(crawlerPromises).then(() => {
+        Promise.all([
+            spawnUpvalueCrawler(upvalueSlice, uniqueStrings, vectors, sharedKnowledgeBase),
+            spawnFunctionCrawler(functionSlice, uniqueStrings, vectors, sharedKnowledgeBase)
+        ]).then(() => {
             let output = `-- Bytecode Version ${bytecodeVersion} | Length ${buffer.length} bytes\n\n`;
+
+            uniqueStrings.forEach(str => {
+                if (str.endsWith("Service") || str === "Players") {
+                    sharedKnowledgeBase.services.add(str);
+                } else if (str.startsWith("Body") || str.endsWith("Velocity") || str.endsWith("Force")) {
+                    sharedKnowledgeBase.physics.add(str);
+                }
+            });
 
             if (sharedKnowledgeBase.services.size === 0) {
                 sharedKnowledgeBase.services.add("Players");
@@ -141,6 +148,13 @@ function decompileLuau(hexString, callback) {
             
             if (!sharedKnowledgeBase.services.has("Workspace")) output += `local workspace = game:GetService("Workspace")\n`;
             output += `local localPlayer = players.LocalPlayer\n\n`;
+
+            let processingCondition = false;
+            sharedKnowledgeBase.hints.forEach(hint => {
+                if (hint.type === "CONDITIONAL_BRANCH") {
+                    processingCondition = true;
+                }
+            });
 
             if (uniqueStrings.includes("GetDescendants") && uniqueStrings.includes("pairs")) {
                 output += `for _, instance in pairs(workspace:GetDescendants()) do\n`;
@@ -164,6 +178,15 @@ function decompileLuau(hexString, callback) {
                         output += `    local ${part.charAt(0).toLowerCase() + part.slice(1)} = character:WaitForChild("${part}")\n`;
                     }
                 });
+                
+                let boundUpvalueStr = "";
+                Object.keys(sharedKnowledgeBase.upvalues).forEach(key => {
+                    boundUpvalueStr += `    upvalue_${key} = character\n`;
+                });
+                if (boundUpvalueStr !== "") {
+                    output += boundUpvalueStr;
+                }
+
                 output += `end)\n\n`;
             }
 
@@ -171,14 +194,18 @@ function decompileLuau(hexString, callback) {
                 output += `workspace.ChildAdded:Connect(function(child)\n`;
                 if (sharedKnowledgeBase.physics.size > 0) {
                     const childConditions = [...sharedKnowledgeBase.physics].map(p => `child:IsA("${p}")`).join(" or ");
-                    output += `    if ${childConditions} then\n        child:Destroy()\n    end\n`;
+                    if (processingCondition) {
+                        output += `    if ${childConditions} then\n        child:Destroy()\n    else\n        -- Alternative block path branch active\n    end\n`;
+                    } else {
+                        output += `    if ${childConditions} then\n        child:Destroy()\n    end\n`;
+                    }
                 }
                 output += `end)\n\n`;
             }
 
             if (uniqueStrings.includes("wait") || uniqueStrings.includes("random")) {
-                let low = numericConstants[0] || 1;
-                let high = numericConstants[1] || 5;
+                let low = numericConstants || 1;
+                let high = numericConstants || 5;
                 if (low >= high) { low = 1; high = 5; }
 
                 output += `task.spawn(function()\n`;
