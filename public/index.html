@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal</title>
+    <style>
+        body { font-family: sans-serif; background: #000; color: #fff; padding: 20px; }
+        textarea { width: 100%; padding: 10px; background: #111; color: #0f0; border: 1px solid #333; box-sizing: border-box; }
+        #output { color: #00f; height: 300px; }
+        button { width: 100%; padding: 15px; margin: 10px 0; background: #00f; color: #fff; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <textarea id="input" rows="6"></textarea>
+    <button onclick="run()">Run</button>
+    <textarea id="output" readonly></textarea>
+    <script>
+        async function run() {
+            try {
+                const response = await fetch('/api/decompile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bytecodeHex: document.getElementById('input').value })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('output').value = data.code;
+                }
+            } catch {}
+        }
+    </script>
+</body>
+</html>
