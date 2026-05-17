@@ -25,6 +25,7 @@ function processFunctionPrototype(buffer, state, stringTable, vectors, protoId, 
     return new Promise((resolve) => {
         let localRegisters = {};
         let linesOfCode = [];
+        let definedLocals = new Set();
         
         const sizeCode = readVarint(buffer, state);
         const codeStart = state.ptr;
@@ -39,31 +40,66 @@ function processFunctionPrototype(buffer, state, stringTable, vectors, protoId, 
             const rB = buffer[instPtr + 2];
             const rC = buffer[instPtr + 3];
 
-            if (op === vectors.getGlobal || op === vectors.loadK) {
+            if (op === vectors.getGlobal) {
                 const kStr = stringTable[rB];
-                if (kStr) localRegisters[rA] = kStr;
+                if (kStr) {
+                    localRegisters[rA] = kStr;
+                }
+            } 
+            else if (op === vectors.loadK) {
+                const kStr = stringTable[rB];
+                if (kStr) {
+                    localRegisters[rA] = isNaN(kStr) ? `"${kStr}"` : kStr;
+                }
             } 
             else if (op === vectors.getTableKs) {
                 const indexStr = stringTable[rC];
-                const baseVar = localRegisters[rB] || `slot_${rB}`;
-                if (indexStr) localRegisters[rA] = `${baseVar}.${indexStr}`;
+                const baseVar = localRegisters[rB] || `var_${rB}`;
+                if (indexStr) {
+                    localRegisters[rA] = `${baseVar}.${indexStr}`;
+                }
             }
             else if (op === vectors.setTableKs) {
                 const indexStr = stringTable[rC];
-                const baseVar = localRegisters[rA] || `slot_${rA}`;
-                const valueVar = localRegisters[rB] || `slot_${rB}`;
+                const baseVar = localRegisters[rA] || `var_${rA}`;
+                const valueVar = localRegisters[rB] || `var_${rB}`;
                 if (indexStr) linesOfCode.push(`    ${baseVar}.${indexStr} = ${valueVar}`);
             }
             else if (op === vectors.nameCall) {
                 const methodStr = stringTable[rC];
-                const targetVar = localRegisters[rB] || `slot_${rB}`;
+                const targetVar = localRegisters[rB] || `var_${rB}`;
                 if (methodStr) {
+                    localRegisters[rA + 1] = targetVar; 
                     localRegisters[rA] = `${targetVar}:${methodStr}`;
                 }
             }
             else if (op === vectors.call) {
-                const funcVar = localRegisters[rA] || `slot_${rA}`;
-                linesOfCode.push(`    ${funcVar}()`);
+                const funcVar = localRegisters[rA] || `var_${rA}`;
+                let args = [];
+                for (let argReg = rA + 1; argReg < rA + rB; argReg++) {
+                    args.push(localRegisters[argReg] || `var_${argReg}`);
+                }
+                
+                if (funcVar.includes(":GetService") && args[0]) {
+                    const cleanService = args[0].replace(/"/g, '');
+                    const serviceVar = cleanService.charAt(0).toLowerCase() + cleanService.slice(1);
+                    linesOfCode.push(`    local ${serviceVar} = game:GetService(${args[0]})`);
+                    localRegisters[rA] = serviceVar;
+                    definedLocals.add(rA);
+                } else {
+                    if (rC === 0) {
+                        linesOfCode.push(`    ${funcVar}(${args.join(", ")})`);
+                    } else {
+                        const callStr = `${funcVar}(${args.join(", ")})`;
+                        if (!definedLocals.has(rA)) {
+                            linesOfCode.push(`    local var_${rA} = ${callStr}`);
+                            definedLocals.add(rA);
+                        } else {
+                            linesOfCode.push(`    var_${rA} = ${callStr}`);
+                        }
+                        localRegisters[rA] = `var_${rA}`;
+                    }
+                }
             }
             else if (op === vectors.jmpIf || op === vectors.jmpIfNot) {
                 const condVar = localRegisters[rA] || "condition";
@@ -71,29 +107,39 @@ function processFunctionPrototype(buffer, state, stringTable, vectors, protoId, 
                 linesOfCode.push(`    end`);
             }
             else if (op === vectors.getUpvalue) {
-                localRegisters[rA] = `upvalue_${rB}`;
+                localRegisters[rA] = sharedKnowledgeBase.upvalueMap[rB] || `upvalue_${rB}`;
             }
             else if (op === vectors.setUpvalue) {
-                const valueVar = localRegisters[rA] || `slot_${rA}`;
-                linesOfCode.push(`    upvalue_${rB} = ${valueVar}`);
+                const valueVar = localRegisters[rA] || `var_${rA}`;
+                const upName = sharedKnowledgeBase.upvalueMap[rB] || `upvalue_${rB}`;
+                linesOfCode.push(`    ${upName} = ${valueVar}`);
             }
             else if (op === vectors.add || op === vectors.sub || op === vectors.mul || op === vectors.div) {
-                const term1 = localRegisters[rB] || `slot_${rB}`;
-                const term2 = localRegisters[rC] || `slot_${rC}`;
+                const term1 = localRegisters[rB] || `var_${rB}`;
+                const term2 = localRegisters[rC] || `var_${rC}`;
                 let sym = "+";
                 if (op === vectors.sub) sym = "-";
                 else if (op === vectors.mul) sym = "*";
                 else if (op === vectors.div) sym = "/";
-                localRegisters[rA] = `(${term1} ${sym} ${term2})`;
-                linesOfCode.push(`    slot_${rA} = ${localRegisters[rA]}`);
+                
+                const expression = `(${term1} ${sym} ${term2})`;
+                localRegisters[rA] = expression;
+                
+                if (!definedLocals.has(rA)) {
+                    linesOfCode.push(`    local var_${rA} = ${expression}`);
+                    definedLocals.add(rA);
+                } else {
+                    linesOfCode.push(`    var_${rA} = ${expression}`);
+                }
             }
         }
 
+        // Fast forward through prototype structural metadata layers safely
         if (state.ptr < buffer.length) readVarint(buffer, state); 
         if (state.ptr < buffer.length) readVarint(buffer, state); 
         if (state.ptr < buffer.length) readVarint(buffer, state); 
 
-        resolve({ protoId, code: linesOfCode });
+        resolve({ protoId, code: linesOfCode, registers: localRegisters });
     });
 }
 
@@ -109,7 +155,7 @@ function decompileLuau(hexString, callback) {
         const luauVersion = buffer[state.ptr++];
         const bytecodeVersion = luauVersion >= 4 ? buffer[state.ptr++] : luauVersion;
 
-        const vectors = opcodeVectors[bytecodeVersion] || opcodeVectors[3];
+        const vectors = opcodeVectors[bytecodeVersion] || opcodeVectors;
 
         const stringCount = readVarint(buffer, state);
         let stringTable = [];
@@ -135,8 +181,15 @@ function decompileLuau(hexString, callback) {
         }
 
         const protoCount = readVarint(buffer, state);
-        let sharedKnowledgeBase = { globals: new Set(), hints: [], outputLines: [] };
+        let sharedKnowledgeBase = { globals: new Set(), hints: [], upvalueMap: {} };
         let crawlerPromises = [];
+
+        // Build upvalue mapping based on extracted script parameters
+        uniqueStrings.forEach((str, idx) => {
+            if (str.length > 2 && !str.endsWith("Service")) {
+                sharedKnowledgeBase.upvalueMap[idx] = `tracked_${str.toLowerCase()}`;
+            }
+        });
 
         for (let p = 0; p < protoCount; p++) {
             if (state.ptr >= buffer.length) break;
@@ -146,22 +199,17 @@ function decompileLuau(hexString, callback) {
         Promise.all(crawlerPromises).then((results) => {
             let output = `-- Bytecode Version ${bytecodeVersion} | Length ${buffer.length} bytes\n\n`;
 
-            uniqueStrings.forEach(str => {
-                if (str.endsWith("Service") || str === "Players" || str === "UserInputService" || str === "TweenService" || str === "RunService") {
-                    const varName = str.charAt(0).toLowerCase() + str.slice(1);
-                    output += `local ${varName} = game:GetService("${str}")\n`;
-                }
-            });
-            output += `local workspace = game:GetService("Workspace")\n`;
-            
-            let playersVar = uniqueStrings.includes("Players") ? "players" : "game:GetService(\"Players\")";
-            output += `local localPlayer = ${playersVar}.LocalPlayer\n\n`;
-
+            // Core script structural assembly processing
             results.forEach(res => {
                 if (res.code.length > 0) {
-                    output += `function closure_prototype_${res.protoId}(...)\n`;
-                    output += res.code.join("\n") + "\n";
-                    output += `end\n\n`;
+                    if (res.protoId === results.length - 1) {
+                        output += `-- Main Thread Logic Script Execution Block\n`;
+                        output += res.code.join("\n") + "\n";
+                    } else {
+                        output += `function closure_prototype_${res.protoId}(...)\n`;
+                        output += res.code.join("\n") + "\n";
+                        output += `end\n\n`;
+                    }
                 }
             });
 
