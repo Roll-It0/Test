@@ -6,23 +6,18 @@ function decompileLuau(hexString) {
     try {
         const cleanHex = hexString.replace(/\s+/g, '');
         const buffer = Buffer.from(cleanHex, 'hex');
-        
         if (buffer.length < 3) return "";
-
         let ptr = 0;
         const luauVersion = buffer[ptr++];
         let bytecodeVersion = 0;
-        
         if (luauVersion >= 4) {
             bytecodeVersion = buffer[ptr++];
         } else {
             bytecodeVersion = luauVersion; 
         }
-
         let output = "";
         let strings = [];
         let currentStr = "";
-        
         for (let i = ptr; i < buffer.length; i++) {
             const char = buffer[i];
             if (char >= 32 && char <= 126) {
@@ -34,15 +29,12 @@ function decompileLuau(hexString) {
                 currentStr = "";
             }
         }
-
         const uniqueStrings = [...new Set(strings)];
-
         output += "local Constants = {\n";
         uniqueStrings.forEach((str, idx) => {
             output += `    [${idx + 1}] = "${str}",\n`;
         });
         output += "}\n\n";
-
         output += "function Main(...)\n";
         let stringIdx = 0;
         uniqueStrings.forEach(str => {
@@ -52,7 +44,6 @@ function decompileLuau(hexString) {
             }
         });
         output += "end\n";
-        
         return output;
     } catch (err) {
         return "";
@@ -60,7 +51,7 @@ function decompileLuau(hexString) {
 }
 
 const server = http.createServer((req, res) => {
-    if (req.method === 'POST' && req.url === '/api/decompile') {
+    if (req.method === 'POST' && req.url.includes('/api/decompile')) {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', () => {
@@ -85,9 +76,11 @@ const server = http.createServer((req, res) => {
                 res.end(htmlData);
             }
         });
+    } else {
+        res.writeHead(405, { 'Content-Type': 'text/plain' });
+        res.end('Method Not Allowed');
     }
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT);
-  
