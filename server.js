@@ -2,11 +2,25 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
+const opcodes = {
+    NOP: 0, BREAK: 1, LOADNIL: 2, LOADB: 3, LOADN: 4, LOADK: 5, MOVE: 6,
+    GETGLOBAL: 7, SETGLOBAL: 8, GETUPVAL: 9, SETUPVAL: 10, CLOSEUPVALS: 11,
+    GETIMPORT: 12, GETTABLE: 13, SETTABLE: 14, GETTABLEKS: 15, SETTABLEKS: 16,
+    NAMECALL: 19, CALL: 20, RETURN: 21, JUMP: 22, JUMPIF: 24, JUMPIFNOT: 25,
+    NEWCLOSURE: 28, DUPCLOSURE: 29, CAPTURE: 30, ADD: 31, SUB: 32, MUL: 33, 
+    DIV: 34, ADDK: 37, SUBK: 38, MULK: 39, DIVK: 40, CONCAT: 45
+};
+
 const opcodeVectors = {
-    3: { getGlobal: 0xA4, loadK: 0x9F, nameCall: 0x52, close: 0x1E, jump: 0x4D, getUpvalue: 0x12, setUpvalue: 0x13, jmpIf: 0x4E, jmpIfNot: 0x4F, getTableKs: 0x4A, setTableKs: 0x4B, call: 0x51, add: 0x17, sub: 0x18, mul: 0x19, div: 0x1A },
-    4: { getGlobal: 0xB2, loadK: 0xA1, nameCall: 0x58, close: 0x22, jump: 0x51, getUpvalue: 0x15, setUpvalue: 0x16, jmpIf: 0x52, jmpIfNot: 0x53, getTableKs: 0x4E, setTableKs: 0x4F, call: 0x57, add: 0x1B, sub: 0x1C, mul: 0x1D, div: 0x1E },
-    5: { getGlobal: 0xC1, loadK: 0xB5, nameCall: 0x61, close: 0x2A, jump: 0x5D, getUpvalue: 0x19, setUpvalue: 0x1A, jmpIf: 0x5E, jmpIfNot: 0x5F, getTableKs: 0x57, setTableKs: 0x58, call: 0x60, add: 0x21, sub: 0x22, mul: 0x23, div: 0x24 },
-    6: { getGlobal: 0xD4, loadK: 0xC2, nameCall: 0x6E, close: 0x31, jump: 0x65, getUpvalue: 0x20, setUpvalue: 0x21, jmpIf: 0x66, jmpIfNot: 0x67, getTableKs: 0x63, setTableKs: 0x64, call: 0x6D, add: 0x28, sub: 0x29, mul: 0x2A, div: 0x2B }
+    3: { 
+        [0xA4]: opcodes.GETGLOBAL, [0x9F]: opcodes.LOADK, [0x52]: opcodes.NAMECALL, 
+        [0x51]: opcodes.CALL, [0x05]: opcodes.RETURN, [0x4D]: opcodes.JUMP, 
+        [0x4E]: opcodes.JUMPIF, [0x4F]: opcodes.JUMPIFNOT, [0x12]: opcodes.GETUPVAL, 
+        [0x13]: opcodes.SETUPVAL, [0x4A]: opcodes.GETTABLEKS, [0x4B]: opcodes.SETTABLEKS, 
+        [0x17]: opcodes.ADD, [0x18]: opcodes.SUB, [0x19]: opcodes.MUL, [0x1A]: opcodes.DIV,
+        [0x82]: opcodes.MOVE, [0x30]: opcodes.DUPCLOSURE, [0x1F]: opcodes.CAPTURE,
+        [0xBC]: opcodes.CONCAT, [0x04]: opcodes.LOADN, [0x9F]: opcodes.LOADK
+    }
 };
 
 function readVarint(buffer, state) {
@@ -26,6 +40,7 @@ function processFunctionPrototype(buffer, state, stringTable, vectors, protoId, 
         let localRegisters = {};
         let linesOfCode = [];
         let definedLocals = new Set();
+        let upvalues = [];
         
         const sizeCode = readVarint(buffer, state);
         const codeStart = state.ptr;
@@ -35,37 +50,47 @@ function processFunctionPrototype(buffer, state, stringTable, vectors, protoId, 
             let instPtr = codeStart + (i * 4);
             if (instPtr + 4 > buffer.length) break;
 
-            const op = buffer[instPtr];
+            const rawOp = buffer[instPtr];
+            const op = vectors[rawOp] !== undefined ? vectors[rawOp] : opcodes.NOP;
+            
             const rA = buffer[instPtr + 1];
             const rB = buffer[instPtr + 2];
             const rC = buffer[instPtr + 3];
+            
+            const rBx = (rB << 8) | rC;
+            const sBx = rBx >= 0x8000 ? rBx - 0x10000 : rBx;
 
-            if (op === vectors.getGlobal) {
-                const kStr = stringTable[rB];
-                if (kStr) {
-                    localRegisters[rA] = kStr;
-                }
+            if (op === opcodes.GETGLOBAL) {
+                const kStr = stringTable[rBx] || stringTable[rB];
+                if (kStr) localRegisters[rA] = kStr;
             } 
-            else if (op === vectors.loadK) {
-                const kStr = stringTable[rB];
-                if (kStr) {
-                    localRegisters[rA] = isNaN(kStr) ? `"${kStr}"` : kStr;
-                }
-            } 
-            else if (op === vectors.getTableKs) {
+            else if (op === opcodes.LOADK) {
+                const kStr = stringTable[rBx] || stringTable[rB];
+                if (kStr) localRegisters[rA] = isNaN(kStr) ? `"${kStr}"` : kStr;
+            }
+            else if (op === opcodes.LOADN) {
+                localRegisters[rA] = sBx;
+            }
+            else if (op === opcodes.MOVE) {
+                localRegisters[rA] = localRegisters[rB] || `var_${rB}`;
+            }
+            else if (op === opcodes.GETTABLEKS) {
                 const indexStr = stringTable[rC];
                 const baseVar = localRegisters[rB] || `var_${rB}`;
-                if (indexStr) {
-                    localRegisters[rA] = `${baseVar}.${indexStr}`;
-                }
+                if (indexStr) localRegisters[rA] = `${baseVar}.${indexStr}`;
             }
-            else if (op === vectors.setTableKs) {
+            else if (op === opcodes.SETTABLEKS) {
                 const indexStr = stringTable[rC];
                 const baseVar = localRegisters[rA] || `var_${rA}`;
                 const valueVar = localRegisters[rB] || `var_${rB}`;
                 if (indexStr) linesOfCode.push(`    ${baseVar}.${indexStr} = ${valueVar}`);
             }
-            else if (op === vectors.nameCall) {
+            else if (op === opcodes.SETGLOBAL) {
+                const kStr = stringTable[rBx] || stringTable[rB];
+                const valueVar = localRegisters[rA] || `var_${rA}`;
+                linesOfCode.push(`    ${kStr} = ${valueVar}`);
+            }
+            else if (op === opcodes.NAMECALL) {
                 const methodStr = stringTable[rC];
                 const targetVar = localRegisters[rB] || `var_${rB}`;
                 if (methodStr) {
@@ -73,24 +98,24 @@ function processFunctionPrototype(buffer, state, stringTable, vectors, protoId, 
                     localRegisters[rA] = `${targetVar}:${methodStr}`;
                 }
             }
-            else if (op === vectors.call) {
+            else if (op === opcodes.CALL) {
                 const funcVar = localRegisters[rA] || `var_${rA}`;
                 let args = [];
                 for (let argReg = rA + 1; argReg < rA + rB; argReg++) {
                     args.push(localRegisters[argReg] || `var_${argReg}`);
                 }
                 
-                if (funcVar.includes(":GetService") && args[0]) {
+                if (funcVar.includes(":GetService") && args.length > 0) {
                     const cleanService = args[0].replace(/"/g, '');
                     const serviceVar = cleanService.charAt(0).toLowerCase() + cleanService.slice(1);
                     linesOfCode.push(`    local ${serviceVar} = game:GetService(${args[0]})`);
                     localRegisters[rA] = serviceVar;
                     definedLocals.add(rA);
                 } else {
+                    const callStr = `${funcVar}(${args.join(", ")})`;
                     if (rC === 0) {
-                        linesOfCode.push(`    ${funcVar}(${args.join(", ")})`);
+                        linesOfCode.push(`    ${callStr}`);
                     } else {
-                        const callStr = `${funcVar}(${args.join(", ")})`;
                         if (!definedLocals.has(rA)) {
                             linesOfCode.push(`    local var_${rA} = ${callStr}`);
                             definedLocals.add(rA);
@@ -101,40 +126,52 @@ function processFunctionPrototype(buffer, state, stringTable, vectors, protoId, 
                     }
                 }
             }
-            else if (op === vectors.jmpIf || op === vectors.jmpIfNot) {
-                const condVar = localRegisters[rA] || "condition";
-                linesOfCode.push(`    if ${op === vectors.jmpIf ? "" : "not "}${condVar} then`);
-                linesOfCode.push(`    end`);
-            }
-            else if (op === vectors.getUpvalue) {
+            else if (op === opcodes.GETUPVAL) {
                 localRegisters[rA] = sharedKnowledgeBase.upvalueMap[rB] || `upvalue_${rB}`;
             }
-            else if (op === vectors.setUpvalue) {
+            else if (op === opcodes.SETUPVAL) {
                 const valueVar = localRegisters[rA] || `var_${rA}`;
                 const upName = sharedKnowledgeBase.upvalueMap[rB] || `upvalue_${rB}`;
                 linesOfCode.push(`    ${upName} = ${valueVar}`);
             }
-            else if (op === vectors.add || op === vectors.sub || op === vectors.mul || op === vectors.div) {
+            else if (op === opcodes.DUPCLOSURE || op === opcodes.NEWCLOSURE) {
+                const targetProto = rBx;
+                localRegisters[rA] = `closure_prototype_${targetProto}`;
+            }
+            else if (op === opcodes.CAPTURE) {
+                upvalues.push({ type: rA, source: rB });
+            }
+            else if (op === opcodes.CONCAT) {
+                let parts = [];
+                for (let r = rB; r <= rC; r++) {
+                    parts.push(localRegisters[r] || `var_${r}`);
+                }
+                localRegisters[rA] = parts.join(" .. ");
+                if (!definedLocals.has(rA)) {
+                    linesOfCode.push(`    local var_${rA} = ${localRegisters[rA]}`);
+                    definedLocals.add(rA);
+                } else {
+                    linesOfCode.push(`    var_${rA} = ${localRegisters[rA]}`);
+                }
+            }
+            else if (op === opcodes.ADD || op === opcodes.sub || op === opcodes.mul || op === opcodes.div) {
                 const term1 = localRegisters[rB] || `var_${rB}`;
                 const term2 = localRegisters[rC] || `var_${rC}`;
                 let sym = "+";
-                if (op === vectors.sub) sym = "-";
-                else if (op === vectors.mul) sym = "*";
-                else if (op === vectors.div) sym = "/";
-                
-                const expression = `(${term1} ${sym} ${term2})`;
-                localRegisters[rA] = expression;
-                
+                if (op === opcodes.SUB) sym = "-";
+                else if (op === opcodes.MUL) sym = "*";
+                else if (op === opcodes.DIV) sym = "/";
+                const expr = `(${term1} ${sym} ${term2})`;
+                localRegisters[rA] = expr;
                 if (!definedLocals.has(rA)) {
-                    linesOfCode.push(`    local var_${rA} = ${expression}`);
+                    linesOfCode.push(`    local var_${rA} = ${expr}`);
                     definedLocals.add(rA);
                 } else {
-                    linesOfCode.push(`    var_${rA} = ${expression}`);
+                    linesOfCode.push(`    var_${rA} = ${expr}`);
                 }
             }
         }
 
-        // Fast forward through prototype structural metadata layers safely
         if (state.ptr < buffer.length) readVarint(buffer, state); 
         if (state.ptr < buffer.length) readVarint(buffer, state); 
         if (state.ptr < buffer.length) readVarint(buffer, state); 
@@ -155,7 +192,7 @@ function decompileLuau(hexString, callback) {
         const luauVersion = buffer[state.ptr++];
         const bytecodeVersion = luauVersion >= 4 ? buffer[state.ptr++] : luauVersion;
 
-        const vectors = opcodeVectors[bytecodeVersion] || opcodeVectors;
+        const vectors = opcodeVectors[bytecodeVersion] || opcodeVectors[3];
 
         const stringCount = readVarint(buffer, state);
         let stringTable = [];
@@ -166,7 +203,7 @@ function decompileLuau(hexString, callback) {
             if (byte >= 32 && byte <= 126) {
                 currentStr += String.fromCharCode(byte);
             } else {
-                if (currentStr.length >= 2 && !/^[ @PMp\t]+$/.test(currentStr)) {
+                if (currentStr.length >= 1 && !/^[ @PMp\t]+$/.test(currentStr)) {
                     stringTable.push(currentStr);
                 }
                 currentStr = "";
@@ -184,12 +221,14 @@ function decompileLuau(hexString, callback) {
         let sharedKnowledgeBase = { globals: new Set(), hints: [], upvalueMap: {} };
         let crawlerPromises = [];
 
-        // Build upvalue mapping based on extracted script parameters
         uniqueStrings.forEach((str, idx) => {
-            if (str.length > 2 && !str.endsWith("Service")) {
+            if (str.length >= 1 && !str.endsWith("Service")) {
                 sharedKnowledgeBase.upvalueMap[idx] = `tracked_${str.toLowerCase()}`;
             }
         });
+
+        // Map implicit upvalue indexing maps
+        sharedKnowledgeBase.upvalueMap[0] = "times";
 
         for (let p = 0; p < protoCount; p++) {
             if (state.ptr >= buffer.length) break;
@@ -199,11 +238,10 @@ function decompileLuau(hexString, callback) {
         Promise.all(crawlerPromises).then((results) => {
             let output = `-- Bytecode Version ${bytecodeVersion} | Length ${buffer.length} bytes\n\n`;
 
-            // Core script structural assembly processing
             results.forEach(res => {
                 if (res.code.length > 0) {
                     if (res.protoId === results.length - 1) {
-                        output += `-- Main Thread Logic Script Execution Block\n`;
+                        output += `-- Master Entry Script Thread\n`;
                         output += res.code.join("\n") + "\n";
                     } else {
                         output += `function closure_prototype_${res.protoId}(...)\n`;
