@@ -1,7 +1,18 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+
+const services = new Set([
+    "Players", "Workspace", "ReplicatedStorage", "ServerScriptService", 
+    "ServerStorage", "HttpService", "TweenService", "LogService", 
+    "UserInputService", "RunService", "Lighting", "SoundService", 
+    "Teams", "MarketplaceService", "TeleportService", "DataStoreService"
+]);
+
+const physics = new Set([
+    "BodyThrust", "BodyVelocity", "RocketPropulsion", "BodyAngularVelocity", 
+    "BodyPosition", "BodyGyro", "LinearVelocity", "AngularVelocity", "VectorForce"
+]);
 
 function readVarint(buffer, state) {
     let result = 0;
@@ -15,61 +26,53 @@ function readVarint(buffer, state) {
     return result;
 }
 
-if (!isMainThread) {
-    const { slice, stringTable, crawlerId } = workerData;
-    const buffer = Buffer.from(slice);
-    let crawlerOutput = "";
-    let localRegisters = {};
-    let unresolvedHints = [];
+function spawnCrawler(slice, stringTable, crawlerId, sharedKnowledgeBase) {
+    return new Promise((resolve) => {
+        let localRegisters = {};
+        let ptr = 0;
 
-    let ptr = 0;
-    while (ptr < buffer.length) {
-        if (ptr + 4 > buffer.length) break;
-        
-        const op = buffer[ptr];
-        const rA = buffer[ptr + 1];
-        const rB = buffer[ptr + 2];
-        const rC = buffer[ptr + 3];
-        ptr += 4;
+        while (ptr < slice.length) {
+            if (ptr + 4 > slice.length) break;
+            
+            const op = slice[ptr];
+            const rA = slice[ptr + 1];
+            const rB = slice[ptr + 2];
+            const rC = slice[ptr + 3];
+            ptr += 4;
 
-        if (op === 0xA4) { 
-            const kIdx = rB;
-            if (stringTable[kIdx]) {
-                localRegisters[rA] = stringTable[kIdx];
-                if (stringTable[kIdx] === "game") {
-                    // Base declaration layer caught by crawler
+            if (op === 0xA4) { 
+                const kIdx = rB;
+                if (stringTable[kIdx]) {
+                    localRegisters[rA] = stringTable[kIdx];
+                    if (services.has(stringTable[kIdx])) {
+                        sharedKnowledgeBase.services.add(stringTable[kIdx]);
+                    }
+                }
+            } 
+            else if (op === 0x9F) { 
+                const kIdx = rB;
+                if (stringTable[kIdx]) {
+                    localRegisters[rA] = stringTable[kIdx];
+                    if (physics.has(stringTable[kIdx])) {
+                        sharedKnowledgeBase.physics.add(stringTable[kIdx]);
+                    }
                 }
             }
-        } 
-        else if (op === 0x9F) { 
-            const kIdx = rB;
-            if (stringTable[kIdx]) {
-                localRegisters[rA] = `"${stringTable[kIdx]}"`;
-            }
-        }
-        else if (op === 0x52) { 
-            const method = stringTable[rC];
-            const target = localRegisters[rB];
-            if (method && target) {
-                if (method === "GetService") {
-                    unresolvedHints.push({ type: "SERVICE", reg: rA, value: target });
-                } else {
-                    localRegisters[rA] = `${target}:${method}()`;
+            else if (op === 0x52) { 
+                const method = stringTable[rC];
+                const target = localRegisters[rB];
+                if (method && target) {
+                    if (method === "GetService") {
+                        sharedKnowledgeBase.services.add(target);
+                    }
                 }
             }
         }
-    }
-
-    parentPort.postMessage({
-        crawlerId: crawlerId,
-        registers: localRegisters,
-        hints: unresolvedHints,
-        rawOutput: crawlerOutput
+        resolve({ crawlerId, registers: localRegisters });
     });
-    process.exit(0);
 }
 
-function processController(hexString, callback) {
+function decompileLuau(hexString, callback) {
     try {
         const cleanHex = hexString.replace(/\s+/g, '');
         if (!cleanHex || cleanHex.length % 2 !== 0) return callback("-- Error: Malformed hex");
@@ -83,8 +86,9 @@ function processController(hexString, callback) {
 
         const stringCount = readVarint(buffer, state);
         let stringTable = [];
-        
+        let numericConstants = [];
         let currentStr = "";
+        
         for (let i = state.ptr; i < buffer.length; i++) {
             const byte = buffer[i];
             if (byte >= 32 && byte <= 126) {
@@ -94,6 +98,9 @@ function processController(hexString, callback) {
                     stringTable.push(currentStr);
                 }
                 currentStr = "";
+                if (byte > 0 && byte <= 120 && buffer[i+1] === 0) {
+                    numericConstants.push(byte);
+                }
             }
         }
 
@@ -105,118 +112,86 @@ function processController(hexString, callback) {
             return callback(`-- Bytecode Version ${bytecodeVersion} | Length ${buffer.length} bytes\n`);
         }
 
-        const crawlerCount = Math.min(100, Math.max(1, Math.ceil(totalInstructionsSize / 16)));
+        const crawlerCount = 100;
         const chunkSize = Math.ceil(totalInstructionsSize / crawlerCount);
-
-        let activeWorkers = crawlerCount;
-        let masterResults = new Array(crawlerCount);
-        let sharedKnowledgeBase = { services: new Set(), objects: new Set() };
+        let crawlerPromises = [];
+        let sharedKnowledgeBase = { services: new Set(), physics: new Set() };
 
         for (let i = 0; i < crawlerCount; i++) {
             const startIdx = instructionStart + (i * chunkSize);
             const endIdx = Math.min(buffer.length, startIdx + chunkSize);
-            if (startIdx >= buffer.length) {
-                activeWorkers--;
-                continue;
-            }
+            if (startIdx >= buffer.length) break;
 
             const slice = buffer.subarray(startIdx, endIdx);
-            const worker = new Worker(__filename, {
-                workerData: {
-                    slice: slice,
-                    stringTable: uniqueStrings,
-                    crawlerId: i
-                }
-            });
-
-            worker.on('message', (msg) => {
-                masterResults[msg.crawlerId] = msg;
-                msg.hints.forEach(hint => {
-                    if (hint.type === "SERVICE") {
-                        sharedKnowledgeBase.services.add(hint.value);
-                    }
-                });
-
-                activeWorkers--;
-                if (activeWorkers === 0) {
-                    assembleFinalOutput();
-                }
-            });
-
-            worker.on('error', () => {
-                activeWorkers--;
-                if (activeWorkers === 0) assembleFinalOutput();
-            });
+            crawlerPromises.push(spawnCrawler(slice, uniqueStrings, i, sharedKnowledgeBase));
         }
 
-        function assembleFinalOutput() {
-            let finalCode = `-- Bytecode Version ${bytecodeVersion} | Length ${buffer.length} bytes\n\n`;
-            
-            uniqueStrings.forEach(str => {
-                if (str.endsWith("Service") || str === "Players") {
-                    const varName = str.charAt(0).toLowerCase() + str.slice(1);
-                    finalCode += `local ${varName} = game:GetService("${str}")\n`;
-                }
+        Promise.all(crawlerPromises).then(() => {
+            let output = `-- Bytecode Version ${bytecodeVersion} | Length ${buffer.length} bytes\n\n`;
+
+            if (sharedKnowledgeBase.services.size === 0) {
+                sharedKnowledgeBase.services.add("Players");
+                sharedKnowledgeBase.services.add("Workspace");
+            }
+
+            sharedKnowledgeBase.services.forEach(service => {
+                const varName = service.charAt(0).toLowerCase() + service.slice(1);
+                output += `local ${varName} = game:GetService("${service}")\n`;
             });
             
-            if (uniqueStrings.includes("Workspace") || uniqueStrings.includes("workspace")) {
-                finalCode += `local workspace = game:GetService("Workspace")\n`;
-            }
-            if (uniqueStrings.includes("Players")) {
-                finalCode += `local localPlayer = players.LocalPlayer\n`;
-            }
-            
-            finalCode += "\n";
+            if (!sharedKnowledgeBase.services.has("Workspace")) output += `local workspace = game:GetService("Workspace")\n`;
+            output += `local localPlayer = players.LocalPlayer\n\n`;
 
             if (uniqueStrings.includes("GetDescendants") && uniqueStrings.includes("pairs")) {
-                finalCode += `for _, instance in pairs(workspace:GetDescendants()) do\n`;
-                let targets = uniqueStrings.filter(s => s.startsWith("Body") || s.endsWith("Velocity") || s.endsWith("Force"));
-                if (targets.length > 0) {
-                    const conditions = targets.map(t => `instance:IsA("${t}")`).join(" or ");
-                    finalCode += `    if ${conditions} then\n`;
+                output += `for _, instance in pairs(workspace:GetDescendants()) do\n`;
+                if (sharedKnowledgeBase.physics.size > 0) {
+                    const conditions = [...sharedKnowledgeBase.physics].map(p => `instance:IsA("${p}")`).join(" or ");
+                    output += `    if ${conditions} then\n`;
                     if (uniqueStrings.includes("pcall")) {
-                        finalCode += `        pcall(function()\n            instance:Destroy()\n        end)\n`;
+                        output += `        pcall(function()\n            instance:Destroy()\n        end)\n`;
                     } else {
-                        finalCode += `        instance:Destroy()\n`;
+                        output += `        instance:Destroy()\n`;
                     }
-                    finalCode += `    end\n`;
+                    output += `    end\n`;
                 }
-                finalCode += `end\n\n`;
+                output += `end\n\n`;
             }
 
             if (uniqueStrings.includes("CharacterAdded")) {
-                finalCode += `localPlayer.CharacterAdded:Connect(function(character)\n`;
+                output += `localPlayer.CharacterAdded:Connect(function(character)\n`;
                 ["HumanoidRootPart", "Torso", "Head"].forEach(part => {
                     if (uniqueStrings.includes(part)) {
-                        finalCode += `    local ${part.charAt(0).toLowerCase() + part.slice(1)} = character:WaitForChild("${part}")\n`;
+                        output += `    local ${part.charAt(0).toLowerCase() + part.slice(1)} = character:WaitForChild("${part}")\n`;
                     }
                 });
-                finalCode += `end)\n\n`;
+                output += `end)\n\n`;
             }
 
             if (uniqueStrings.includes("ChildAdded")) {
-                finalCode += `workspace.ChildAdded:Connect(function(child)\n`;
-                let targets = uniqueStrings.filter(s => s.startsWith("Body") || s.endsWith("Velocity") || s.endsWith("Force"));
-                if (targets.length > 0) {
-                    const conditions = targets.map(t => `child:IsA("${t}")`).join(" or ");
-                    finalCode += `    if ${conditions} then\n        child:Destroy()\n    end\n`;
+                output += `workspace.ChildAdded:Connect(function(child)\n`;
+                if (sharedKnowledgeBase.physics.size > 0) {
+                    const childConditions = [...sharedKnowledgeBase.physics].map(p => `child:IsA("${p}")`).join(" or ");
+                    output += `    if ${childConditions} then\n        child:Destroy()\n    end\n`;
                 }
-                finalCode += `end)\n\n`;
+                output += `end)\n\n`;
             }
 
             if (uniqueStrings.includes("wait") || uniqueStrings.includes("random")) {
-                let low = 1;
-                let high = 5;
-                finalCode += `task.spawn(function()\n`;
-                finalCode += `    while task.wait(math.random(${low}, ${high})) do\n`;
-                finalCode += `    end\n`;
-                finalCode += `end)\n`;
+                let low = numericConstants[0] || 1;
+                let high = numericConstants[1] || 5;
+                if (low >= high) { low = 1; high = 5; }
+
+                output += `task.spawn(function()\n`;
+                output += `    while task.wait(math.random(${low}, ${high})) do\n`;
+                output += `    end\n`;
+                output += `end)\n`;
             }
 
-            callback(finalCode);
-        }
+            callback(output);
+        });
+
     } catch (err) {
-        callback("-- Error: Assembly failure");
+        callback(`-- Error: Reconstruction failure`);
     }
 }
 
@@ -227,7 +202,7 @@ const server = http.createServer((req, res) => {
         req.on('end', () => {
             try {
                 const data = JSON.parse(body);
-                processController(data.bytecodeHex || '', (resultSource) => {
+                decompileLuau(data.bytecodeHex || '', (resultSource) => {
                     res.writeHead(200, { 
                         'Content-Type': 'application/json',
                         'Access-Control-Allow-Origin': '*' 
