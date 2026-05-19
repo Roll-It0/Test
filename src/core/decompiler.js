@@ -1,36 +1,55 @@
-const OP_CODES = require('./opcodes');
+const fail = code => {
+  const e = new Error(code);
+  e.code = code;
+  throw e;
+};
 
-class LuauDecompiler {
-    static decompile(parsedData) {
-        let luaCode = "-- Decompiled with Web API Backend\n\n";
-        
-        parsedData.protos.forEach((proto, pId) => {
-            const lines = [];
-            const registers = {};
-            
-            proto.instructions.forEach((ins) => {
-                const opCodeNum = ins & 0xFF;
-                const op = OP_CODES[opCodeNum] || { name: "UNKNOWN" };
-                const a = (ins >> 8) & 0xFF;
-                const bx = (ins >> 16) & 0xFFFF;
+const state = () => ({
+  regs: {},
+  out: []
+});
 
-                if (op.name === "LOADK" && proto.constants[bx]) {
-                    registers[a] = `"${proto.constants[bx].value}"`;
-                } else if (op.name === "GETGLOBAL" && proto.constants[bx]) {
-                    registers[a] = `${proto.constants[bx].value}`;
-                } else if (op.name === "CALL") {
-                    const funcName = registers[a] || `var_${a}`;
-                    lines.push(`${funcName}()`);
-                }
-            });
+const set = (s, r, v) => {
+  s.regs[r] = v;
+};
 
-            if (lines.length > 0) {
-                luaCode += `-- Function Proto [${pId}]\n` + lines.join("\n") + "\n\n";
-            }
-        });
+const get = (s, r) => {
+  return s.regs[r] || ("r" + r);
+};
 
-        return luaCode === "-- Decompiled with Web API Backend\n\n" ? "-- No executable operations mapped." : luaCode;
-    }
-}
+const emit = (s, v) => {
+  s.out.push(v);
+};
 
-module.exports = LuauDecompiler;
+const handle = {
+  loadConst: (s, i, proto) => {
+    set(s, i.a, JSON.stringify(proto.constants[i.bx]));
+  },
+  move: (s, i) => {
+    set(s, i.a, get(s, i.b));
+  },
+  call: (s, i) => {
+    emit(s, get(s, i.a) + "()");
+  },
+  ret: (s, i) => {
+    emit(s, "return " + get(s, i.a));
+  }
+};
+
+const decompileProto = proto => {
+  if (!proto || !proto.instructions) fail("INVALID_PROTO");
+  if (!proto.opcodeMap) fail("MISSING_OPCODE_MAP");
+  const s = state();
+  for (let idx = 0; idx < proto.instructions.length; idx++) {
+    const i = proto.instructions[idx];
+    const def = proto.opcodeMap[i.opcode];
+    if (!def) fail("UNKNOWN_OPCODE");
+    if (def.flags.loadConst) handle.loadConst(s, i, proto);
+    else if (def.flags.move) handle.move(s, i);
+    else if (def.flags.call) handle.call(s, i);
+    else if (def.flags.ret) handle.ret(s, i);
+  }
+  return s.out.join("\n");
+};
+
+module.exports = { decompileProto };
