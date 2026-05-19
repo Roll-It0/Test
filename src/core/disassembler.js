@@ -1,40 +1,39 @@
-const OP_CODES = require('./opcodes');
+const fail = code => {
+  const e = new Error(code);
+  e.code = code;
+  throw e;
+};
 
-class LuauDisassembler {
-    static disassemble(parsedData) {
-        let output = "";
-        parsedData.protos.forEach((proto, index) => {
-            output += `; Prototype [${index}] | Params: ${proto.numParams} | Stack: ${proto.maxStackSize}\n`;
-            
-            proto.instructions.forEach((ins, pc) => {
-                const opCodeNum = ins & 0xFF;
-                const op = OP_CODES[opCodeNum] || { name: `UNKNOWN_${opCodeNum}`, format: "NONE" };
-                
-                const a = (ins >> 8) & 0xFF;
-                const b = (ins >> 16) & 0xFF;
-                const c = (ins >> 24) & 0xFF;
-                const bx = (ins >> 16) & 0xFFFF;
-                const sbx = bx - 0x7FFF;
+const formatABC = (i, name) => name + " " + i.a + " " + i.b + " " + i.c;
+const formatABx = (i, name) => name + " " + i.a + " " + i.bx;
+const formatAsBx = (i, name) => name + " " + i.a + " " + i.sbx;
+const formatAx = (i, name) => name + " " + i.ax;
 
-                let args = "";
-                if (op.format === "A") args = `${a}`;
-                else if (op.format === "AB") args = `${a} ${b}`;
-                else if (op.format === "ABC") args = `${a} ${b} ${c}`;
-                else if (op.format === "ABx") {
-                    let kContext = "";
-                    if ((op.name === "LOADK" || op.name === "GETGLOBAL" || op.name === "SETGLOBAL") && proto.constants[bx]) {
-                        kContext = ` ; '${proto.constants[bx].value}'`;
-                    }
-                    args = `${a} ${bx}${kContext}`;
-                } else if (op.format === "sBx") args = `${sbx}`;
-                else if (op.format === "AsBx") args = `${a} ${sbx}`;
+const formatters = {
+  ABC: formatABC,
+  ABx: formatABx,
+  AsBx: formatAsBx,
+  Ax: formatAx
+};
 
-                output += `  [${pc.toString().padStart(3, '0')}] ${op.name.padEnd(12)} ${args}\n`;
-            });
-            output += "\n";
-        });
-        return output;
-    }
-}
+const disassembleInstruction = (i, table) => {
+  const def = table[i.opcode];
+  if (!def) fail("UNKNOWN_OPCODE");
+  const f = formatters[def.shape];
+  if (!f) fail("INVALID_SHAPE");
+  return f(i, def.name);
+};
 
-module.exports = LuauDisassembler;
+const disassembleProto = proto => {
+  if (!proto || !proto.instructions) fail("INVALID_PROTO");
+  const table = proto.opcodeMap;
+  if (!table) fail("MISSING_OPCODE_MAP");
+  const out = [];
+  for (let idx = 0; idx < proto.instructions.length; idx++) {
+    const ins = proto.instructions[idx];
+    out.push(disassembleInstruction(ins, table));
+  }
+  return out;
+};
+
+module.exports = { disassembleProto };
