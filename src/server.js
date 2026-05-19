@@ -1,48 +1,58 @@
 const http = require('http');
+const LuauBytecodeReader = require('./core/reader');
+const LuauDisassembler = require('./core/disassembler');
+const LuauDecompiler = require('./core/decompiler');
 
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
-    // Ensure all responses are JSON and allow API access
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+        res.statusCode = 204;
+        return res.end();
+    }
 
     if (req.method === 'POST' && req.url === '/decompile') {
         let body = '';
-
         req.on('data', chunk => { body += chunk.toString(); });
         req.on('end', () => {
             try {
                 const parsed = JSON.parse(body);
                 if (!parsed.bytecode) {
                     res.statusCode = 400;
-                    return res.end(JSON.stringify({ error: "Missing 'bytecode' field in JSON." }));
+                    return res.end(JSON.stringify({ error: "Missing 'bytecode' parameter payload." }));
                 }
 
-                // Decode Base64 string back into a Node.js binary Buffer
-                const binaryBytecode = Buffer.from(parsed.bytecode, 'base64');
-
-                // TODO: Pass binaryBytecode to your core modules
-                // const disassembly = disassembler.run(binaryBytecode);
-                // const decompiled = decompiler.run(disassembly);
+                const binaryBuffer = Buffer.from(parsed.bytecode, 'base64');
+                
+                // Unified Data Lifecycle Execution Chain
+                const reader = new LuauBytecodeReader(binaryBuffer);
+                const rawAST = reader.parse();
+                
+                const disassemblyResult = LuauDisassembler.disassemble(rawAST);
+                const decompiledResult = LuauDecompiler.decompile(rawAST);
 
                 res.statusCode = 200;
                 res.end(JSON.stringify({
-                    disassembly: "; Disassembly placeholder for binary length: " + binaryBytecode.length,
-                    decompiled: "-- Decompiler placeholder\nprint('Hello from API')"
+                    disassembly: disassemblyResult,
+                    decompiled: decompiledResult
                 }));
 
             } catch (err) {
-                res.statusCode = 400;
-                res.end(JSON.stringify({ error: "Invalid JSON format or bad payload." }));
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: "Pipeline Parsing Exception Raised: " + err.message }));
             }
         });
     } else {
         res.statusCode = 404;
-        res.end(JSON.stringify({ error: "Endpoint not found. Use POST /decompile" }));
+        res.end(JSON.stringify({ error: "Endpoint Route Invalid." }));
     }
 });
 
 server.listen(PORT, () => {
-    console.log(`API Service running on port ${PORT}`);
+    console.log(`Production API Server operational via port ${PORT}`);
 });
