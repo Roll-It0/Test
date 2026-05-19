@@ -1,64 +1,77 @@
-// src/server.js
-const http = require('http');
-const LuauBytecodeReader = require('./core/reader');
-const LuauDisassembler = require('./core/disassembler');
-const LuauDecompiler = require('./core/decompiler');
+const http = require("http");
+const { parseChunk } = require("./core/reader");
+const { unshuffleProto } = require("./core/unshuffler");
+const { disassembleProto } = require("./core/disassembler");
+const { decompileProto } = require("./core/decompiler");
 
 const PORT = process.env.PORT || 3000;
 
+const send = (res, code, obj) => {
+  res.writeHead(code, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(obj));
+};
+
 const server = http.createServer((req, res) => {
-    // 1. Force global JSON response formatting explicitly to clear 406 faults
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With, Accept');
+  if (req.method !== "POST" || req.url !== "/decompile") {
+    return send(res, 404, { error: "ROUTE_NOT_FOUND" });
+  }
 
-    if (req.method === 'OPTIONS') {
-        res.statusCode = 200;
-        return res.end();
+  let body = "";
+  req.on("data", chunk => {
+    body += chunk;
+    if (body.length > 5242880) req.destroy();
+  });
+
+  req.on("end", () => {
+    let json;
+    try {
+      json = JSON.parse(body);
+    } catch {
+      return send(res, 400, { error: "INVALID_JSON" });
     }
 
-    if (req.url === '/decompile') {
-        if (req.method !== 'POST') {
-            res.statusCode = 405;
-            return res.end(JSON.stringify({ error: "Method Not Allowed. Use POST." }));
-        }
-
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
-            try {
-                const parsed = JSON.parse(body);
-                if (!parsed.bytecode) {
-                    res.statusCode = 400;
-                    return res.end(JSON.stringify({ error: "Missing 'bytecode' parameter payload." }));
-                }
-
-                const binaryBuffer = Buffer.from(parsed.bytecode, 'base64');
-                const reader = new LuauBytecodeReader(binaryBuffer);
-                const rawAST = reader.parse();
-                
-                const disassemblyResult = LuauDisassembler.disassemble(rawAST);
-                const decompiledResult = LuauDecompiler.decompile(rawAST);
-
-                // 2. Format successful responses cleanly
-                res.statusCode = 200;
-                res.end(JSON.stringify({
-                    disassembly: disassemblyResult,
-                    decompiled: decompiledResult
-                }));
-
-            } catch (err) {
-                res.statusCode = 500;
-                res.end(JSON.stringify({ error: "Pipeline Parsing Exception Raised: " + err.message }));
-            }
-        });
-    } else {
-        res.statusCode = 404;
-        res.end(JSON.stringify({ error: "Endpoint Route Invalid." }));
+    if (!json.bytecode || typeof json.bytecode !== "string") {
+      return send(res, 400, { error: "BYTECODE_REQUIRED" });
     }
+
+    let buf;
+    try {
+      buf = Buffer.from(json.bytecode, "base64");
+    } catch {
+      return send(res, 400, { error: "INVALID_BASE64" });
+    }
+
+    let chunk;
+    try {
+      chunk = parseChunk(buf);
+    } catch (e) {
+      return send(res, 422, { error: "PARSE_FAILURE", detail: e.message });
+    }
+
+    let proto;
+    try {
+      proto = unshuffleProto(chunk.main, chunk.meta);
+    } catch (e) {
+      return send(res, 422, { error: "UNSHUFFLE_FAILURE", detail: e.message });
+    }
+
+    let disassembly;
+    try {
+      const lines = disassembleProto(proto);
+      disassembly = Array.isArray(lines) ? lines.join("\n") : String(lines);
+    } catch (e) {
+      return send(res, 422, { error: "DISASSEMBLY_FAILURE", detail: e.message });
+    }
+
+    let decompiled;
+    try {
+      decompiled = decompileProto(proto);
+    } catch (e) {
+      return send(res, 422, { error: "DECOMPILATION_FAILURE", detail: e.message });
+    }
+
+    send(res, 200, { disassembly, decompiled });
+  });
 });
 
-server.listen(PORT, () => {
-    console.log(`Production API Server operational via port ${PORT}`);
-});
+server.listen(PORT);
