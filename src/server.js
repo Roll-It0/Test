@@ -7,19 +7,17 @@ const LuauDecompiler = require('./core/decompiler');
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
-    // 1. Force global CORS headers so the executor isn't blocked
-    res.setHeader('Content-Type', 'application/json');
+    // 1. Force global JSON response formatting explicitly to clear 406 faults
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With, Accept');
 
-    // 2. Safely resolve pre-flight OPTIONS requests sent by exploit environments
     if (req.method === 'OPTIONS') {
         res.statusCode = 200;
         return res.end();
     }
 
-    // 3. Main processing path
     if (req.url === '/decompile') {
         if (req.method !== 'POST') {
             res.statusCode = 405;
@@ -43,6 +41,7 @@ const server = http.createServer((req, res) => {
                 const disassemblyResult = LuauDisassembler.disassemble(rawAST);
                 const decompiledResult = LuauDecompiler.decompile(rawAST);
 
+                // 2. Format successful responses cleanly
                 res.statusCode = 200;
                 res.end(JSON.stringify({
                     disassembly: disassemblyResult,
