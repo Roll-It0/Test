@@ -23,20 +23,13 @@ const server = http.createServer((req, res) => {
   });
 
   req.on("end", () => {
-    let json;
-    try {
-      json = JSON.parse(body);
-    } catch {
-      return send(res, 400, { error: "INVALID_JSON" });
-    }
-
-    if (!json.bytecode || typeof json.bytecode !== "string") {
-      return send(res, 400, { error: "BYTECODE_REQUIRED" });
+    if (!body || typeof body !== "string") {
+      return send(res, 400, { error: "EMPTY_BODY" });
     }
 
     let buf;
     try {
-      buf = Buffer.from(json.bytecode, "base64");
+      buf = Buffer.from(body.trim(), "base64");
     } catch {
       return send(res, 400, { error: "INVALID_BASE64" });
     }
