@@ -1,0 +1,919 @@
+-- Script Path: game:GetService("ReplicatedStorage").Modules.RangedModule
+-- Took 0.1s to decompile.
+-- Executor: Delta (1.1.727.1199)
+
+local v_u_1 = {}
+v_u_1.__index = v_u_1
+v_u_1.Loops = {}
+local v_u_2 = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("CameraOffset"))
+local v_u_3 = game:GetService("RunService")
+local v_u_4 = game:GetService("UserInputService")
+local v_u_5 = game:GetService("ReplicatedStorage"):WaitForChild("Animations")
+local v_u_6 = require(script:WaitForChild("Settings"))
+local v_u_7 = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("Game Configuration"))
+local v_u_8 = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("GetCursor"))
+local v_u_9 = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("ShootEffect"))
+local v_u_10 = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("LowSpeed"))
+local v_u_11 = game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents"):WaitForChild("ShootEffect")
+local v_u_12 = game:GetService("CollectionService")
+game:GetService("GuiService"):GetGuiInset()
+local v_u_13 = {
+    ["PullOut"] = true,
+    ["Idle"] = true,
+    ["Aim"] = true
+}
+function v_u_1.new(p_u_14) -- name: new
+    -- upvalues: (copy) v_u_1, (copy) v_u_3, (copy) v_u_6, (copy) v_u_5, (copy) v_u_13, (copy) v_u_4, (copy) v_u_8, (copy) v_u_2, (copy) v_u_10
+    local v15 = v_u_1
+    local v_u_16 = setmetatable({}, v15)
+    v_u_16.Model = p_u_14
+    v_u_16.Handle = p_u_14:WaitForChild("Main")
+    v_u_16.Flash = p_u_14.Main:WaitForChild("Front")
+    v_u_16.Ammo = p_u_14:WaitForChild("Ammo")
+    v_u_16.StockAmmo = p_u_14:WaitForChild("StockAmmo")
+    v_u_16.LastAimSendOS = 0
+    v_u_16.Character = p_u_14.Parent:IsA("Backpack") and p_u_14.Parent.Parent.Character or p_u_14.Parent
+    v_u_16.Player = game:GetService("Players"):GetPlayerFromCharacter(v_u_16.Character)
+    if v_u_16.Player then
+        v_u_16.SettingsValue = v_u_16.Player:WaitForChild("PlayerData"):WaitForChild("Settings")
+        v_u_16.HumanoidRootPart = v_u_16.Character:WaitForChild("HumanoidRootPart")
+    end
+    if v_u_3:IsClient() then
+        v_u_16.Mouse = v_u_16.Player:GetMouse()
+        v_u_16.Camera = workspace.CurrentCamera
+    end
+    v_u_16.Humanoid = v_u_16.Character:WaitForChild("Humanoid")
+    v_u_16.Variables = {
+        ["Pressing"] = false,
+        ["Equipped"] = false,
+        ["ShootDB"] = false,
+        ["Shooting"] = false,
+        ["ShootingTicket"] = 0,
+        ["Reloading"] = false,
+        ["Aiming"] = false,
+        ["LastTimeShooted"] = 0,
+        ["PullOutOS"] = 0
+    }
+    v_u_16.Event = p_u_14:WaitForChild("Communication")
+    v_u_16.ReloadEvent = p_u_14:WaitForChild("Reload")
+    v_u_16.MiscEvent = p_u_14:WaitForChild("MiscEvent")
+    v_u_16.Configuration = v_u_6[v_u_16.Model.Name]
+    v_u_16.Animations = {}
+    v_u_16.Zoom = v_u_16.Configuration.Zoom or 40
+    v_u_16.CheckTarget = nil
+    v_u_16.CheckTargetOS = 0
+    v_u_16.WeaponType = v_u_16.Configuration.Type
+    v_u_16.IsNpc = v_u_16.Character:GetAttribute("IsNpc")
+    v_u_16.GrabSound = script:WaitForChild("Grab"):Clone()
+    v_u_16.GrabSound.Parent = v_u_16.Handle
+    local v17 = v_u_3:IsServer()
+    if not v17 then
+        v_u_16.UserGameSettings = UserSettings():GetService("UserGameSettings")
+        v_u_16.MainGui = v_u_16.Player:WaitForChild("PlayerGui"):WaitForChild("Main_Gui")
+        v_u_16.Cursor = v_u_16.MainGui:WaitForChild("Cursor")
+        v_u_16.AimSensiData = v_u_16.Player:WaitForChild("PlayerData"):WaitForChild("Settings"):WaitForChild("AimSensitivity")
+        v_u_16.Motors = {}
+        v_u_16.Motors.LeftShoulder = v_u_16.Character.LeftUpperArm.LeftShoulder
+        v_u_16.Motors.RightShoulder = v_u_16.Character.RightUpperArm.RightShoulder
+        v_u_16.Motors.Neck = v_u_16.Character.Head.Neck
+        v_u_16.MotorsOffset = {
+            ["LeftShoulder"] = v_u_16.Motors.LeftShoulder.C0.Position,
+            ["RightShoulder"] = v_u_16.Motors.RightShoulder.C0.Position,
+            ["Neck"] = v_u_16.Motors.Neck.C0.Position
+        }
+    end
+    if v_u_16.IsNpc and v17 or not v17 then
+        if v_u_5.Ranged:FindFirstChild(p_u_14.Name) then
+            for _, v18 in pairs(v_u_5.Ranged[p_u_14.Name]:GetChildren()) do
+                v_u_16.Animations[v18.Name] = v_u_16.Humanoid:WaitForChild("Animator"):LoadAnimation(v18)
+            end
+            if v_u_16.WeaponType then
+                for v19, _ in pairs(v_u_13) do
+                    v_u_16.Animations[v19] = v_u_16.Humanoid:WaitForChild("Animator"):LoadAnimation(v_u_5.Ranged.MiscAnimations[v_u_16.WeaponType .. "_" .. v19])
+                end
+            end
+        end
+        local v_u_20 = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("FieldOfView"))
+        v_u_16.Model.AncestryChanged:Connect(function()
+            -- upvalues: (copy) v_u_16, (ref) v_u_4, (ref) v_u_8, (ref) v_u_2, (ref) v_u_10, (copy) v_u_20, (copy) p_u_14
+            if v_u_16.Model.Parent == v_u_16.Character then
+                v_u_16.Variables.PullOutOS = os.clock()
+                v_u_16.GrabSound:Play()
+                v_u_16:HandleObject()
+                v_u_16.Variables.Equipped = true
+                if v_u_16.WeaponType then
+                    v_u_16.Animations.PullOut:Play()
+                end
+                if v_u_16.Animations.Idle then
+                    v_u_16.Animations.Idle:Play()
+                end
+                if v_u_16.AmmoText then
+                    v_u_16.Mobile.Visible = true
+                    v_u_16.AmmoText.Text = v_u_16.Ammo.Value .. "/" .. v_u_16.StockAmmo.Value
+                    v_u_16.AmmoText.Visible = true
+                    v_u_4.MouseIconEnabled = false
+                    v_u_16.Cursor.Visible = true
+                    v_u_16:CreateLoop(v_u_16.Model.Name .. "Equipped", function()
+                        -- upvalues: (ref) v_u_16, (ref) v_u_8, (ref) v_u_2, (ref) v_u_10, (ref) v_u_20, (ref) p_u_14
+                        local v21 = v_u_16.Player:GetAttribute("AimLock")
+                        local v22 = (v_u_16.Camera.CFrame.p - v_u_16.Camera.Focus.p).Magnitude <= 0.75
+                        local v23 = false
+                        if v21 and v_u_16.Variables.Aiming or (v_u_16.Variables.Shooting or v22) then
+                            if v21 and v_u_16.Variables.Aiming or v22 and v_u_16.Variables.Aiming then
+                                v23 = true
+                                local _, _, v24 = v_u_8.GetCursor(v_u_16.Player:GetAttribute("AimLock"))
+                                local v25 = v24 and (v24.Parent:GetAttribute("IsNpc") and v24:IsDescendantOf(workspace.Npc_Workspace.Npcs))
+                                if v25 then
+                                    v25 = v24.Parent:FindFirstChild("HumanoidRootPart")
+                                end
+                                if v25 then
+                                    local v26 = v_u_16.HumanoidRootPart.Position - v25.Position
+                                    local v27 = v26.Magnitude
+                                    local v28 = v26.Unit
+                                    if v25.CFrame.LookVector:Dot(v28) > 0.1 and (v27 <= 60 and os.clock() - v_u_16.LastAimSendOS >= 2) then
+                                        if v_u_16.CheckTarget == v25 then
+                                            if os.clock() - v_u_16.CheckTargetOS >= 1 then
+                                                local v29 = v25.Parent:FindFirstChild("AimedAtEvent")
+                                                if v29 then
+                                                    v_u_16.LastAimSendOS = os.clock()
+                                                    v29:FireServer(v_u_16.Model)
+                                                end
+                                            end
+                                        else
+                                            v_u_16.CheckTarget = v25
+                                            v_u_16.CheckTargetOS = os.clock()
+                                        end
+                                    end
+                                else
+                                    v_u_16.CheckTarget = nil
+                                end
+                            end
+                            if v_u_16.Animations.Aim and not v_u_16.Animations.Aim.IsPlaying then
+                                v_u_16.Animations.Aim:Play()
+                            end
+                            v_u_16:ArmPoint(true)
+                        else
+                            if v_u_16.Animations.Aim and v_u_16.Animations.Aim.IsPlaying then
+                                v_u_16.Animations.Aim:Stop()
+                            end
+                            v_u_16:ArmPoint(false)
+                        end
+                        if v22 then
+                            v_u_2[10] = nil
+                        elseif v21 and v_u_16.Variables.Aiming or v_u_16.Variables.Shooting then
+                            local v30 = v_u_16.Humanoid.SeatPart
+                            if v30 and v30:IsDescendantOf(workspace.CarChassis_Workspace) then
+                                if v30.Name == "Right" then
+                                    v_u_2[10] = Vector3.new(5, 3, -1.5)
+                                else
+                                    v_u_2[10] = Vector3.new(-5, 3, 1.5)
+                                end
+                            else
+                                v_u_2[10] = nil
+                            end
+                        else
+                            v_u_2[10] = nil
+                        end
+                        if v23 and v_u_16.Humanoid.Health > 0 then
+                            v_u_16:ChangeSensivity(v_u_16.Zoom)
+                            v_u_10[v_u_16.Model.Name .. "Aiming"] = 7
+                            v_u_20[p_u_14.Name] = v_u_16.Zoom
+                        else
+                            v_u_16:ChangeSensivity()
+                            v_u_10[v_u_16.Model.Name .. "Aiming"] = nil
+                            v_u_20[p_u_14.Name] = nil
+                        end
+                    end)
+                    return
+                end
+            else
+                v_u_16:EndLoop(v_u_16.Model.Name .. "Equipped")
+                v_u_16.GrabSound:Stop()
+                v_u_4.MouseIconEnabled = true
+                v_u_16.Variables.Equipped = false
+                for _, v31 in pairs(v_u_16.Animations) do
+                    v31:Stop()
+                end
+                if v_u_16.AmmoText then
+                    v_u_16.Mobile.Visible = false
+                    game:GetService("UserInputService").MouseIconEnabled = true
+                    v_u_16.AmmoText.Visible = false
+                    v_u_16.Variables.Aiming = false
+                    v_u_16:ChangeSensivity()
+                    v_u_10[v_u_16.Model.Name .. "Aiming"] = nil
+                    v_u_20[p_u_14.Name] = nil
+                    v_u_2[10] = nil
+                    v_u_16:ArmPoint(false)
+                    v_u_16.Cursor.Visible = false
+                end
+            end
+        end)
+        if v_u_16.Animations.Reload then
+            v_u_16.Animations.Reload:GetMarkerReachedSignal("Out"):Connect(function(_)
+                -- upvalues: (copy) v_u_16
+                v_u_16:HandleObject(true, "Out")
+            end)
+            v_u_16.Animations.Reload:GetMarkerReachedSignal("In"):Connect(function(_)
+                -- upvalues: (copy) v_u_16
+                v_u_16:HandleObject(true, "In")
+            end)
+        end
+    end
+    v_u_16.AmmoText = nil
+    v_u_16.AimAtObject = Instance.new("ObjectValue")
+    v_u_16.AimAtObject.Name = "AimAt"
+    v_u_16.AimAtObject.Parent = p_u_14
+    v_u_16.JustAddSomeMore = 0
+    if v_u_3:IsServer() then
+        if v_u_16.IsNpc then
+            v_u_16.Model.Activated:Connect(function()
+                -- upvalues: (copy) v_u_16
+                v_u_16:HandleShoot()
+            end)
+            v_u_16.Model.Deactivated:Connect(function()
+                -- upvalues: (copy) v_u_16
+                v_u_16.Variables.Pressing = false
+            end)
+        else
+            function v_u_16.ReloadEvent.OnServerInvoke(...)
+                -- upvalues: (copy) v_u_16
+                if ... == v_u_16.Player then
+                    v_u_16:HandleReload(...)
+                end
+            end
+            v_u_16.Event.OnServerEvent:Connect(function(...)
+                -- upvalues: (copy) v_u_16
+                if ... == v_u_16.Player then
+                    v_u_16:HandleHit(...)
+                end
+            end)
+            v_u_16.MiscEvent.OnServerEvent:Connect(function(p32, p33, p34)
+                -- upvalues: (copy) v_u_16
+                if p32 == v_u_16.Player then
+                    v_u_16:HandleObject(p32, p33, p34)
+                end
+            end)
+        end
+        local v35 = v_u_16.Model:WaitForChild("Main")
+        local v36 = v_u_16.Character:GetAttribute("Helicopter") and v_u_16.Character:WaitForChild("Main") or v_u_16.Character:WaitForChild("RightHand")
+        local v37 = v_u_16.Model:WaitForChild("Hold")
+        v37.Part0 = v36
+        v37.Part1 = v35
+        v37.Parent = v36
+        if v_u_16.Model:FindFirstChild("LeftHold") then
+            local v38 = v_u_16.Character:WaitForChild("LeftHand")
+            local v39 = v_u_16.Model:WaitForChild("LeftHold")
+            v39.Part0 = v38
+            v39.Part1 = v_u_16.Model:WaitForChild("LeftHandObject")
+            v39.Parent = v38
+            return v_u_16
+        end
+    else
+        function v_u_16.ReloadEvent.OnClientInvoke(...)
+            -- upvalues: (copy) v_u_16
+            v_u_16:PlayReloadAnim(...)
+        end
+        local v40 = v_u_16.Player:WaitForChild("PlayerGui"):WaitForChild("Main_Gui")
+        v_u_16.Mobile = v40:WaitForChild("Mobile"):WaitForChild("Weapon")
+        v_u_16.AmmoText = v40:WaitForChild("MiddleFrame"):WaitForChild("BarHolder"):WaitForChild("Ammo")
+        if v_u_16.Variables.Equipped then
+            v_u_16.AmmoText.Text = v_u_16.Ammo.Value .. "/" .. v_u_16.StockAmmo.Value
+        end
+        p_u_14:WaitForChild("Ammo").Changed:Connect(function()
+            -- upvalues: (copy) v_u_16
+            if v_u_16.Variables.Equipped then
+                v_u_16.AmmoText.Text = v_u_16.Ammo.Value .. "/" .. v_u_16.StockAmmo.Value
+            end
+        end)
+        p_u_14:WaitForChild("StockAmmo").Changed:Connect(function()
+            -- upvalues: (copy) v_u_16
+            if v_u_16.Variables.Equipped then
+                v_u_16.AmmoText.Text = v_u_16.Ammo.Value .. "/" .. v_u_16.StockAmmo.Value
+            end
+        end)
+        v_u_16.MobileButtons = {
+            ["Shoot"] = v_u_16.Mobile:WaitForChild("Shoot"),
+            ["Reload"] = v_u_16.Mobile:WaitForChild("Reload"),
+            ["Aim"] = v_u_16.Mobile:WaitForChild("Aim")
+        }
+        v_u_16.Mouse.Button2Down:Connect(function()
+            -- upvalues: (copy) v_u_16
+            v_u_16.Variables.Aiming = true
+        end)
+        v_u_16.Mouse.Button2Up:Connect(function()
+            -- upvalues: (copy) v_u_16
+            v_u_16.Variables.Aiming = false
+        end)
+        if v_u_4.TouchEnabled then
+            v_u_16.MobileButtons.Aim.MouseButton1Down:Connect(function()
+                -- upvalues: (copy) v_u_16
+                if v_u_16.Variables.Aiming then
+                    v_u_16.Variables.Aiming = false
+                elseif v_u_16.Variables.Equipped then
+                    v_u_16.Variables.Aiming = true
+                end
+            end)
+            v_u_16.MobileButtons.Shoot.MouseButton1Down:Connect(function()
+                -- upvalues: (copy) v_u_16
+                v_u_16:HandleShoot()
+            end)
+            v_u_4.TouchEnded:Connect(function()
+                -- upvalues: (copy) v_u_16
+                v_u_16.Variables.Pressing = false
+            end)
+        end
+        v_u_16.Mouse.Button1Up:Connect(function()
+            -- upvalues: (ref) v_u_4, (copy) v_u_16
+            local v41 = not (v_u_4.TouchEnabled and v_u_4.GamepadEnabled) and ((v_u_4.TouchEnabled or not v_u_4.GamepadEnabled) and not v_u_4.TouchEnabled and true or false)
+            if v41 then
+                v41 = not v_u_4.GamepadEnabled
+            end
+            if v41 then
+                v_u_16.Variables.Pressing = false
+            end
+        end)
+        v_u_16.Mouse.Button1Down:Connect(function()
+            -- upvalues: (ref) v_u_4, (copy) v_u_16
+            local v42 = not (v_u_4.TouchEnabled and v_u_4.GamepadEnabled) and ((v_u_4.TouchEnabled or not v_u_4.GamepadEnabled) and not v_u_4.TouchEnabled and true or false)
+            if v42 then
+                v42 = not v_u_4.GamepadEnabled
+            end
+            if v42 then
+                v_u_16:HandleShoot()
+            end
+        end)
+        game:GetService("UserInputService").InputBegan:Connect(function(p43, p44)
+            -- upvalues: (copy) v_u_16
+            if not p44 and v_u_16.Model.Parent == v_u_16.Character then
+                if p43.KeyCode == Enum.KeyCode.R or p43.KeyCode == Enum.KeyCode.ButtonX then
+                    v_u_16:Reload()
+                end
+                if p43.KeyCode == Enum.KeyCode.ButtonL2 and v_u_16.Variables.Equipped then
+                    v_u_16.Variables.Aiming = true
+                end
+            end
+        end)
+        game:GetService("UserInputService").InputEnded:Connect(function(p45, _)
+            -- upvalues: (copy) v_u_16
+            if p45.KeyCode == Enum.KeyCode.ButtonL2 then
+                v_u_16.Variables.Aiming = false
+            end
+        end)
+        v_u_16.MobileButtons.Reload.MouseButton1Click:Connect(function()
+            -- upvalues: (copy) v_u_16
+            v_u_16:Reload()
+        end)
+    end
+    return v_u_16
+end
+function v_u_1.ChangeSensivity(p46, p47) -- name: ChangeSensivity
+    -- upvalues: (copy) v_u_4
+    local _ = UserSettings():GetService("UserGameSettings").MouseSensitivity
+    if p47 then
+        v_u_4.MouseDeltaSensitivity = p46.AimSensiData.Value
+    else
+        v_u_4.MouseDeltaSensitivity = 1
+    end
+end
+function v_u_1.ArmPoint(p48, p49) -- name: ArmPoint
+    -- upvalues: (copy) v_u_8
+    local v50, _, _ = v_u_8.GetCursorWithoutWall(p48.Player:GetAttribute("AimLock")):ToEulerAnglesYXZ()
+    local v51 = math.clamp(v50, -1.2566370614359172, 1.5707963267948966)
+    for v52, v53 in pairs(p48.Motors) do
+        v53.C0 = CFrame.new(p48.MotorsOffset[v52]) * CFrame.Angles(p49 and v51 and v51 or 0, 0, 0)
+    end
+end
+function v_u_1.Object(p54, _, p55, p56) -- name: Object
+    if p55 then
+        if p56 == "In" then
+            p54.Model:FindFirstChild("LeftHandObject").Transparency = 1
+            p54.Model:FindFirstChild("Mag").Transparency = 0
+        elseif p56 == "Out" then
+            p54.Model:FindFirstChild("LeftHandObject").Transparency = 0
+            p54.Model:FindFirstChild("Mag").Transparency = 1
+        end
+    else
+        if p54.Model:FindFirstChild("LeftHandObject") then
+            p54.Model:FindFirstChild("LeftHandObject").Transparency = 1
+        end
+        if p54.Model:FindFirstChild("Mag") then
+            if p54.Ammo.Value <= 0 and p54.Configuration.IsRocket then
+                p54.Model:FindFirstChild("Mag").Transparency = 1
+                return
+            end
+            p54.Model:FindFirstChild("Mag").Transparency = 0
+        end
+        return
+    end
+end
+function v_u_1.HandleObject(p57, ...) -- name: HandleObject
+    if game:GetService("RunService"):IsServer() then
+        p57:Object(...)
+    else
+        p57.MiscEvent:FireServer(...)
+    end
+end
+function v_u_1.HandleReload(p_u_58, _) -- name: HandleReload
+    if p_u_58.Model.Parent == p_u_58.Character and (p_u_58.Ammo.Value < p_u_58.Configuration.Ammo and (p_u_58.Variables.Reloading == false and p_u_58.StockAmmo.Value > 0)) then
+        p_u_58.Variables.Reloading = true
+        if p_u_58.StockAmmo.Value > 0 then
+            local v59 = {}
+            if p_u_58.Handle:FindFirstChild("Reload") then
+                local v60 = p_u_58.Handle:FindFirstChild("Reload"):Clone()
+                table.insert(v59, v60)
+                v60.Parent = p_u_58.Handle
+                v60:Play()
+                game:GetService("Debris"):AddItem(v60, 4)
+            end
+            local function v64() -- name: PutBulletIn
+                -- upvalues: (copy) p_u_58
+                if p_u_58.Model.Parent == p_u_58.Character and p_u_58.Variables.ShootDB == false then
+                    local v61 = p_u_58.Ammo
+                    v61.Value = v61.Value + 1
+                    local v62 = p_u_58.StockAmmo
+                    v62.Value = v62.Value - 1
+                end
+                if p_u_58.Handle and (p_u_58.Handle:FindFirstChild("BulletIn") and p_u_58.Model.Parent == p_u_58.Character) then
+                    local v63 = p_u_58.Handle:FindFirstChild("BulletIn"):Clone()
+                    v63.Parent = p_u_58.Handle
+                    v63:Play()
+                    game:GetService("Debris"):AddItem(v63, 4)
+                end
+            end
+            if p_u_58.Configuration.IsBulletReload then
+                if p_u_58.StockAmmo.Value > 0 and p_u_58.Ammo.Value < p_u_58.Configuration.Ammo then
+                    for _ = p_u_58.Ammo.Value, p_u_58.Configuration.Ammo do
+                        tick()
+                        if p_u_58.IsNpc then
+                            p_u_58:PlayReloadAnim()
+                        else
+                            p_u_58.ReloadEvent:InvokeClient(p_u_58.Player)
+                        end
+                        v64()
+                        if p_u_58.StockAmmo.Value <= 0 or p_u_58.Ammo.Value >= p_u_58.Configuration.Ammo then
+                            break
+                        end
+                    end
+                end
+            elseif p_u_58.IsNpc then
+                p_u_58:PlayReloadAnim()
+            else
+                p_u_58.ReloadEvent:InvokeClient(p_u_58.Player)
+            end
+            for _, v65 in pairs(v59) do
+                if v65 then
+                    v65:Destroy()
+                end
+            end
+            if p_u_58.Animations.Reload then
+                p_u_58.Animations.Reload:Stop()
+            end
+            if not p_u_58.Configuration.IsBulletReload then
+                if p_u_58.Model.Parent == p_u_58.Character then
+                    local v66 = p_u_58.Ammo.Value + p_u_58.StockAmmo.Value
+                    if p_u_58.Configuration.Ammo < v66 then
+                        p_u_58.Ammo.Value = p_u_58.Configuration.Ammo
+                        p_u_58.StockAmmo.Value = v66 - p_u_58.Configuration.Ammo
+                    else
+                        p_u_58.Ammo.Value = v66
+                        p_u_58.StockAmmo.Value = 0
+                    end
+                else
+                    for _, v67 in pairs(v59) do
+                        if v67 then
+                            v67:Destroy()
+                        end
+                    end
+                end
+            end
+        end
+        p_u_58.Variables.Reloading = false
+    end
+end
+function v_u_1.PlayReloadAnim(p68) -- name: PlayReloadAnim
+    local v69 = os.clock()
+    if p68.Animations.Reload then
+        p68.Animations.Reload:Play()
+        p68.Animations.Reload:AdjustSpeed(p68.Animations.Reload.Length / p68.Configuration.ReloadTime)
+    end
+    if p68.IsNpc then
+        wait(p68.Configuration.ReloadTime)
+    else
+        repeat
+            game:GetService("RunService").Heartbeat:wait()
+        until os.clock() - v69 >= p68.Configuration.ReloadTime or p68.Model.Parent ~= p68.Character
+        p68.Animations.Reload:Stop()
+    end
+end
+function v_u_1.Reload(p70) -- name: Reload
+    -- upvalues: (copy) v_u_10
+    if not p70.Variables.Reloading and (p70.Ammo.Value < p70.Configuration.Ammo and p70.StockAmmo.Value ~= 0) then
+        p70.Variables.Reloading = true
+        v_u_10[p70.Model.Name .. "Reload"] = 7
+        p70.ReloadEvent:InvokeServer()
+        v_u_10[p70.Model.Name .. "Reload"] = nil
+        p70.Variables.Reloading = false
+    end
+end
+function v_u_1.GetVehicleFromSeat(_, p71) -- name: GetVehicleFromSeat
+    if p71 and p71:IsDescendantOf(workspace.CarChassis_Workspace) then
+        return p71.Parent.Name == "Body" and p71.Parent.Parent or p71.Parent
+    else
+        return false
+    end
+end
+function v_u_1.IgnoreOccupantsAndVehicles(p72) -- name: IgnoreOccupantsAndVehicles
+    local v73 = p72:GetVehicleFromSeat(p72.Humanoid.SeatPart)
+    if not v73 then
+        return nil
+    end
+    local v74 = { v73 }
+    for _, v75 in pairs(v73:GetDescendants()) do
+        if (v75:IsA("VehicleSeat") or v75:IsA("Seat")) and v75.Occupant then
+            local v76 = v75.Occupant.Parent
+            table.insert(v74, v76)
+        end
+    end
+    return v74
+end
+function v_u_1.Shoot(p_u_77) -- name: Shoot
+    -- upvalues: (copy) v_u_3, (copy) v_u_10, (copy) v_u_8, (copy) v_u_12, (copy) v_u_7, (copy) v_u_9
+    if p_u_77.Character:GetAttribute("Ragdoll") or (p_u_77.Character:GetAttribute("Safezone") or (p_u_77.Variables.Reloading or (p_u_77.Character:GetAttribute("Parrying") or p_u_77.Character:GetAttribute("TookDamage")))) then
+        return
+    else
+        local v78 = p_u_77.Humanoid.SeatPart
+        if v78 and v78:IsDescendantOf(workspace.CarChassis_Workspace) then
+            if not p_u_77.Configuration.Type or p_u_77.Configuration.Type ~= "Pistol" then
+                return
+            end
+            if v78:GetAttribute("ShootingDisabled") then
+                return
+            end
+        end
+        if p_u_77.Model.Ammo.Value > 0 then
+            local v_u_79 = v_u_3:IsServer()
+            if not v_u_79 then
+                p_u_77.JustAddSomeMore = p_u_77.JustAddSomeMore + 1
+                local v_u_80 = p_u_77.JustAddSomeMore
+                v_u_10[p_u_77.Model.Name .. v_u_80] = 6
+                spawn(function()
+                    -- upvalues: (ref) v_u_10, (copy) p_u_77, (copy) v_u_80
+                    wait(0.1)
+                    v_u_10[p_u_77.Model.Name .. v_u_80] = nil
+                end)
+            end
+            local v_u_81 = {}
+            local v_u_82 = {}
+            local v_u_83 = p_u_77.Configuration.Range
+            local v_u_84 = p_u_77.Model.Name == "Heli" and 2 or 5
+            local v_u_85 = v_u_79 and p_u_77.AimAtObject.Value and p_u_77.AimAtObject.Value.Position or v_u_8.GetCursor(p_u_77.Player:GetAttribute("AimLock"))
+            if v_u_85 then
+                local v_u_86 = p_u_77.Flash.WorldPosition
+                local v87 = { p_u_77.Character, v_u_12:GetTagged("BulletPassThrough"), p_u_77:IgnoreOccupantsAndVehicles() }
+                local v_u_88 = RaycastParams.new()
+                v_u_88.FilterDescendantsInstances = v87
+                v_u_88.FilterType = Enum.RaycastFilterType.Exclude
+                if p_u_77.Animations.Shoot then
+                    p_u_77.Animations.Shoot:Play()
+                end
+                if p_u_77.Animations.PullOut and p_u_77.Animations.PullOut.IsPlaying then
+                    p_u_77.Animations.PullOut:Stop()
+                end
+                local function v105(p89) -- name: Raycast
+                    -- upvalues: (ref) v_u_85, (copy) v_u_79, (copy) v_u_86, (copy) v_u_84, (copy) v_u_83, (copy) v_u_88, (ref) v_u_7, (copy) v_u_81, (copy) v_u_82
+                    if p89 then
+                        v_u_85 = p89
+                    end
+                    if v_u_79 then
+                        local v90 = CFrame.new(v_u_86, v_u_85)
+                        local v91 = CFrame.Angles
+                        local v92 = math.random(-v_u_84, v_u_84)
+                        local v93 = math.rad(v92)
+                        local v94 = math.random(-v_u_84, v_u_84)
+                        v95 = v90 * v91(v93, math.rad(v94), 0)
+                        if v95 then
+                            goto l5
+                        end
+                    end
+                    local v95 = CFrame.new(v_u_86, v_u_85)
+                    ::l5::
+                    local v96 = workspace:Raycast(v_u_86, v95.LookVector * v_u_83, v_u_88)
+                    local v97
+                    if v96 then
+                        v97 = v96.Position
+                        local v98 = v96.Instance
+                        local v99 = v98.Parent.Parent:FindFirstChild("Humanoid") or v98.Parent:FindFirstChild("Humanoid")
+                        local v100 = v98.Parent:FindFirstChild("Health") or v98.Parent.Parent:FindFirstChild("Health")
+                        local v101 = v98:IsDescendantOf(workspace.CarChassis_Workspace)
+                        if v101 then
+                            v101 = v_u_7.GetVehicleFromPart(v98)
+                        end
+                        if v99 and (v99.Health > 0 and not v99:IsDescendantOf(workspace.CarChassis_Workspace)) or (v100 or v101) then
+                            local v102 = v_u_81
+                            local v103 = { v98, v98.Position, v98.CFrame:ToObjectSpace(CFrame.new(v97)) }
+                            table.insert(v102, v103)
+                        end
+                    else
+                        v97 = nil
+                    end
+                    if v97 == nil then
+                        v97 = v95 * CFrame.new(0, 0, -v_u_83).Position
+                    end
+                    local v104 = v_u_82
+                    table.insert(v104, v97)
+                    return v97
+                end
+                if p_u_77.Configuration.IsRocket then
+                    if v_u_79 then
+                        p_u_77:HandleHit(nil, nil, v_u_85, true)
+                    else
+                        v_u_9(nil, nil, p_u_77.Character, nil, nil, p_u_77.Handle)
+                        p_u_77.Event:FireServer(nil, v_u_85, true)
+                    end
+                else
+                    if p_u_77.Configuration.BulletInOneShoot then
+                        local v106 = p_u_77.Configuration.Range
+                        local v107 = p_u_77.Configuration.Spread
+                        local v108 = math.rad(v107) / 2
+                        local v109 = {}
+                        local v110 = CFrame.new(v_u_86, v_u_85)
+                        v109[1] = CFrame.Angles(v108, -v108, 0)
+                        v109[2] = CFrame.Angles(0, v108, 0)
+                        v109[3] = CFrame.Angles(0, -v108, 0)
+                        v109[4] = CFrame.Angles(v108, 0, 0)
+                        v109[5] = CFrame.Angles(-v108, 0, 0)
+                        v109[6] = CFrame.Angles(-v108, v108, 0)
+                        v109[7] = CFrame.Angles(v108, v108, 0)
+                        v109[8] = CFrame.Angles(-v108, -v108, 0)
+                        v109[9] = CFrame.Angles(v108, -v108, 0)
+                        for v111 = 1, p_u_77.Configuration.BulletInOneShoot do
+                            v105((v110 * v109[v111] * CFrame.new(0, 0, -v106)).Position)
+                        end
+                    else
+                        v105()
+                    end
+                    if v_u_79 then
+                        p_u_77:HandleHit(nil, v_u_81, v_u_82, true)
+                    else
+                        v_u_9(v_u_86, v_u_82, p_u_77.Character, nil, p_u_77.Configuration, p_u_77.Handle)
+                        p_u_77.Event:FireServer(v_u_81, v_u_82, true)
+                    end
+                end
+                if not v_u_79 then
+                    local v112 = p_u_77.Configuration.ScreenshakeIntensity / 10
+                    local v113 = 1 - p_u_77.Player.PlayerData.Statistics.Ranged.Value / 100
+                    local v_u_114 = v112 * math.clamp(v113, 0, 1)
+                    task.spawn(function()
+                        -- upvalues: (ref) v_u_3, (copy) v_u_114, (copy) p_u_77
+                        local v115 = math.random(-1, 1)
+                        local v116 = math.random(-1, 1)
+                        local v117 = 0
+                        while v117 < 0.2 do
+                            local v118 = v_u_3.RenderStepped:Wait()
+                            local v119 = v118 / 0.016666666666666666
+                            local v120 = v117 * 31.41592653589793
+                            local v121 = math.sin(v120) * v_u_114 * v115
+                            local v122 = v117 * 31.41592653589793
+                            local v123 = math.sin(v122) * v_u_114 * v116
+                            local v124 = p_u_77.Camera
+                            local v125 = p_u_77.Camera.CFrame
+                            local v126 = CFrame.Angles
+                            local v127 = v123 * v119
+                            local v128 = math.rad(v127)
+                            local v129 = v121 * v119
+                            v124.CFrame = v125 * v126(v128, math.rad(v129), 0)
+                            v117 = v117 + v118
+                        end
+                    end)
+                end
+            end
+        elseif p_u_77.StockAmmo.Value > 0 then
+            if p_u_77.IsNpc then
+                p_u_77:HandleReload()
+            else
+                p_u_77:Reload()
+            end
+        else
+            return
+        end
+    end
+end
+function v_u_1.HandleShoot(p_u_130) -- name: HandleShoot
+    if p_u_130.Variables.ShootDB or (p_u_130.Variables.Equipped == false or (p_u_130.Character:GetAttribute("Parrying") or (p_u_130.Variables.Reloading or (p_u_130.Character:GetAttribute("Executing") or p_u_130.Character:GetAttribute("Executed"))))) then
+        return
+    end
+    if os.clock() - p_u_130.Variables.PullOutOS < 0 then
+        return
+    end
+    p_u_130.Variables.Shooting = true
+    local v131 = p_u_130.Variables
+    v131.ShootingTicket = v131.ShootingTicket + 1
+    local v_u_132 = p_u_130.Variables.ShootingTicket
+    p_u_130.Variables.ShootDB = true
+    p_u_130.Character:SetAttribute("IsAttacking", p_u_130.Variables.ShootDB)
+    p_u_130.Variables.Pressing = true
+    local v133 = game:GetService("RunService"):IsServer()
+    local v134 = v133 and (p_u_130.Configuration.Semi and 0.5 or 0.2) or nil
+    if os.clock() - p_u_130.Variables.LastTimeShooted < p_u_130.Configuration.AfterShootTime then
+        p_u_130.Variables.ShootDB = false
+        p_u_130.Character:SetAttribute("IsAttacking", p_u_130.Variables.ShootDB)
+        return
+    end
+    if p_u_130.Configuration.Semi and not v133 then
+        p_u_130:Shoot()
+        task.wait(p_u_130.Configuration.AfterShootTime)
+        goto l19
+    else
+        while true do
+            if true then
+                p_u_130:Shoot()
+                if v134 then
+                    task.wait(v134)
+                else
+                    task.wait(p_u_130.Configuration.AfterShootTime)
+                end
+            end
+            if p_u_130.Variables.Pressing == false or (p_u_130.Variables.Equipped == false or p_u_130.Variables.Reloading) then
+                ::l19::
+                p_u_130.Variables.ShootDB = false
+                p_u_130.Character:SetAttribute("IsAttacking", p_u_130.Variables.ShootDB)
+                spawn(function()
+                    -- upvalues: (copy) p_u_130, (copy) v_u_132
+                    task.wait(2 - p_u_130.Configuration.AfterShootTime)
+                    if v_u_132 == p_u_130.Variables.ShootingTicket then
+                        p_u_130.Variables.Shooting = false
+                    end
+                end)
+                return
+            end
+        end
+    end
+end
+function v_u_1.HandleHit(p_u_135, p_u_136, p137, p138, p139, p140, _) -- name: HandleHit
+    -- upvalues: (copy) v_u_11
+    if p_u_135.Model and (p_u_135.Model:IsDescendantOf(p_u_135.Character) and (p_u_135.Handle and not p_u_135.Character:GetAttribute("Ragdoll"))) then
+        if os.clock() - p_u_135.Variables.LastTimeShooted < p_u_135.Configuration.AfterShootTime then
+            return
+        elseif p140 then
+            local v141 = script:WaitForChild("Dry"):Clone()
+            v141.Parent = p_u_135.Handle
+            v141:Play()
+            game:GetService("Debris"):AddItem(v141, 4)
+        elseif p_u_135.Model and (p139 and p_u_135.Handle) then
+            if p_u_135.Ammo.Value <= 0 then
+                return
+            end
+            p_u_135.Variables.LastTimeShooted = os.clock()
+            local v142 = p_u_135.Ammo
+            v142.Value = v142.Value - 1
+            p_u_135:HandleObject()
+            if p_u_135.Configuration.IsRocket then
+                local v_u_143 = p_u_135.Configuration.RocketAmmo:Clone()
+                local v144 = CFrame.new(p_u_135.Handle.Position, p138)
+                local v145 = CFrame.Angles
+                local v146 = v_u_143:WaitForChild("Angle").Value
+                v_u_143.CFrame = v144 * v145(0, math.rad(v146), 0)
+                v_u_143.Velocity = v144.LookVector * 100
+                v_u_143.Parent = workspace
+                v_u_143.Anchored = false
+                v_u_143:SetNetworkOwnershipAuto()
+                game:GetService("Debris"):AddItem(v_u_143, 10)
+                v_u_143.Touched:Connect(function(p147)
+                    -- upvalues: (copy) p_u_135, (copy) p_u_136, (copy) v_u_143
+                    if not p147:IsDescendantOf(p_u_135.Character) and p147.Transparency < 1 then
+                        game:GetService("ServerStorage"):WaitForChild("RemoteEvents"):WaitForChild("Explosion"):Fire(p_u_136 or p_u_135.Character, v_u_143.Position, p_u_135.Configuration.BlastRadius, p_u_135.Configuration.Damage)
+                        v_u_143:Destroy()
+                    end
+                end)
+                v_u_11:FireAllClients(p_u_135.Character, nil, nil, nil, nil, p_u_135.Handle)
+            end
+            local v148 = p_u_135.Flash.WorldPosition
+            if v148 and (p138 and not p_u_135.Configuration.IsRocket) then
+                if p_u_135.Configuration.BulletInOneShoot and #p137 > p_u_135.Configuration.BulletInOneShoot then
+                    return
+                end
+                if not p_u_135.Configuration.BulletInOneShoot and #p137 > 1 then
+                    return
+                end
+                v_u_11:FireAllClients(p_u_135.Character, v148, p138, nil, p_u_135.Configuration, p_u_135.Handle)
+            end
+            if p137 ~= nil and p137 ~= {} then
+                if p_u_135.Configuration.BulletInOneShoot and #p137 > p_u_135.Configuration.BulletInOneShoot then
+                    return
+                end
+                if not p_u_135.Configuration.BulletInOneShoot and #p137 > 1 then
+                    return
+                end
+                p_u_135:TakeDamage(p137)
+            end
+        end
+    else
+        return
+    end
+end
+local v_u_149 = require(game:GetService("ReplicatedStorage"):WaitForChild("Modules"):WaitForChild("Damage"))
+function v_u_1.TakeDamage(p150, p151) -- name: TakeDamage
+    -- upvalues: (copy) v_u_7, (copy) v_u_12, (copy) v_u_149
+    for _, v152 in pairs(p151) do
+        if v152[1] and (v152[1].Parent and not p150.Configuration.IsRocket) then
+            local v153 = v152[1].Parent.Parent:FindFirstChild("Humanoid") or v152[1].Parent:FindFirstChild("Humanoid")
+            local v154 = v152[1].Parent:FindFirstChild("Health") or v152[1].Parent.Parent:FindFirstChild("Health")
+            local v155 = v152[1]:IsDescendantOf(workspace.CarChassis_Workspace)
+            if v155 then
+                v155 = v_u_7.GetVehicleFromPart(v152[1])
+            end
+            if (not v153 or (v153.SeatPart or (v152[1].Position - v152[2]).Magnitude <= 40)) and (v153 or v154 and (v154:IsA("NumberValue") and (p150.Player and p150.Player.PlayerData.Police.Value == false)) or v155) then
+                local v156 = nil
+                if p150.Player ~= nil then
+                    local v157 = (v152[1].Position - p150.Character.Head.Position).Magnitude
+                    local v158 = v152[3].Position.X
+                    local v159 = v152[3].Position.Y
+                    local v160 = v152[3].Position.Z
+                    local v161 = v152[1].Size.X
+                    local v162 = v152[1].Size.Y
+                    local v163 = v152[1].Size.Z
+                    local v164 = CFrame.new
+                    local v165 = v152[1].CFrame
+                    local v166 = CFrame.new
+                    local v167 = -v161
+                    local v168 = math.clamp(v158, v167, v161)
+                    local v169 = -v162
+                    local v170 = math.clamp(v159, v169, v162)
+                    local v171 = -v163
+                    local v172 = v164(v165:ToWorldSpace(v166(v168, v170, (math.clamp(v160, v171, v163)))).Position, p150.Character.Head.Position)
+                    local v173 = { p150.Character:GetDescendants(), v_u_12:GetTagged("BulletPassThrough"), p150:IgnoreOccupantsAndVehicles() }
+                    if v155 then
+                        table.insert(v173, v155:GetDescendants())
+                    end
+                    while true do
+                        local v174 = RaycastParams.new()
+                        v174.FilterDescendantsInstances = v173
+                        v174.FilterType = Enum.RaycastFilterType.Exclude
+                        local v175 = workspace:Raycast(v172.Position, v172.LookVector * v157, v174)
+                        if not v175 then
+                            break
+                        end
+                        v156 = v175.Instance
+                        local v176 = v156.Parent:FindFirstChild("Humanoid") or v156.Parent.Parent:FindFirstChild("Humanoid")
+                        local v177
+                        if v156 then
+                            v177 = (v156.Transparency > 0 and (v156.Name ~= "CustomHitbox" and (v156.Name ~= "CustomHead" and v156.Parent.Name ~= "Collision")) or (v156.Name == "Handle" or v156.Name == "Main")) and true or v156:IsDescendantOf(p150.Character)
+                        else
+                            v177 = v156
+                        end
+                        if not (v177 or v176) then
+                            break
+                        end
+                        table.insert(v173, v156)
+                        v156 = nil
+                    end
+                end
+                if not v156 or v156 == v152[1] then
+                    if v153 and not v153:IsDescendantOf(workspace.CarChassis_Workspace) then
+                        local v178 = v152[1].Name == "Head" and true or v152[1].Name == "CustomHead"
+                        v_u_149(v178 and p150.Configuration.Damage * 2 or p150.Configuration.Damage, v153, v152[2], p150.Player or p150.Character)
+                        local v179
+                        if p150.Configuration.Ragdoll then
+                            game:GetService("ServerStorage"):WaitForChild("RemoteEvents"):WaitForChild("ForceRagdoll"):Fire(v153.Parent, p150.Configuration.Ragdoll)
+                            v179 = "Ah"
+                        else
+                            v179 = "Hit"
+                        end
+                        local v180 = script:WaitForChild(v179):Clone()
+                        v180.Parent = v152[1]
+                        v180.PlaybackSpeed = v178 and math.random(60, 90) / 100 or math.random(100, 200) / 100
+                        v180:Play()
+                        game:GetService("Debris"):AddItem(v180, v180.TimeLength + 1)
+                    elseif p150.Player and (v154 and (v154:IsA("NumberValue") and p150.Player.PlayerData.Police.Value == false)) then
+                        v154.Value = v154.Value - p150.Configuration.Damage
+                        v154.Parent:FindFirstChild("LastPlayerHit").Value = p150.Player
+                    elseif v155 and v155:GetAttribute("Health") then
+                        local v181 = v155:GetAttribute("Health") - p150.Configuration.Damage
+                        v155:SetAttribute("Health", (math.clamp(v181, 0, (1 / 0))))
+                    end
+                end
+            end
+        end
+    end
+end
+function v_u_1.PostSimulation(_) -- name: PostSimulation
+    -- upvalues: (copy) v_u_1
+    if v_u_1.Loops then
+        for _, v182 in v_u_1.Loops do
+            v182.Run()
+        end
+    end
+end
+function v_u_1.CreateLoop(_, p183, p184) -- name: CreateLoop
+    -- upvalues: (copy) v_u_1
+    v_u_1.Loops[p183] = {
+        ["Run"] = p184
+    }
+end
+function v_u_1.EndLoop(p185, p186) -- name: EndLoop
+    -- upvalues: (copy) v_u_1
+    if p185.Loops[p186] then
+        v_u_1.Loops[p186] = nil
+    end
+end
+return v_u_1
